@@ -1,51 +1,70 @@
+"""TMX parser.
+
+Uses Python's stdlib ``xml.etree.ElementTree`` (expat) for iterparse instead
+of lxml.  lxml's C-level iterparse with ``recover=True`` has known instability
+on Windows when it encounters certain XML content (null bytes, unusual inline
+tags, encoding issues in specific segments) and hard-crashes the process with
+no catchable Python exception.  stdlib ET raises a proper ``ParseError`` for
+malformed XML, keeps the process alive, and appends a warning so the job can
+still complete with partial results.
+
+The TMX *exporter* (TmxWriter in exporters/tmx.py) still uses lxml's xmlfile
+for efficient streaming output — that is unaffected by this change.
+"""
 from __future__ import annotations
 
+import xml.etree.ElementTree as _ET
 from pathlib import Path
-from typing import List, Optional
-
-from lxml import etree
+from typing import Generator, List, Optional
 
 from app.services.parsers.base import ParseResult, Segment, detect_encoding
 
+# xml:lang attribute name in Clark notation
 XML_LANG = "{http://www.w3.org/XML/1998/namespace}lang"
 MAX_WARNINGS = 200
 
 
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _local(tag: str) -> str:
+    """Strip Clark-notation namespace from an XML tag or attribute name."""
+    return tag.split("}")[-1] if "}" in tag else tag
+
+
 def _lang_matches(tuv_lang: str, wanted_lang: str) -> bool:
-    """
-    Match lang codes case-insensitively.
-    'en-US' matches 'en', 'en-US' matches 'en-US', 'en' matches 'en-US'.
+    """Match lang codes case-insensitively, allowing primary-subtag matching.
+
+    'en-US' matches 'en', 'en' matches 'en-US', etc.
     """
     tl = tuv_lang.lower()
     wl = wanted_lang.lower()
     if tl == wl:
         return True
-    # Primary subtag match: 'en' matches 'en-us', 'en-us' matches 'en'
-    if tl.split("-")[0] == wl.split("-")[0]:
-        return True
-    return False
-
-
-def _get_tuv_lang(tuv_elem) -> Optional[str]:
-    """Get lang from xml:lang or lang attribute."""
-    return tuv_elem.get(XML_LANG) or tuv_elem.get("lang")
+    return tl.split("-")[0] == wl.split("-")[0]
 
 
 def _serialize_seg(seg_elem) -> str:
-    """Serialize <seg> element including all inline tags as a string."""
-    parts = []
+    """Serialize a <seg> element including all inline tags as a string.
+
+    Works with both lxml *and* stdlib ElementTree element objects (the tag
+    local-name extraction differs between the two APIs).
+    """
+    parts: List[str] = []
     if seg_elem.text:
         parts.append(seg_elem.text)
     for child in seg_elem:
-        tag_name = etree.QName(child.tag).localname
-        attribs = " ".join(f'{k}="{v}"' for k, v in child.attrib.items())
-        open_tag = f"<{tag_name} {attribs}>" if attribs else f"<{tag_name}>"
-        parts.append(open_tag)
+        tag_name = _local(child.tag)
+        attribs = " ".join(f'{_local(k)}="{v}"' for k, v in child.attrib.items())
+        parts.append(f"<{tag_name} {attribs}>" if attribs else f"<{tag_name}>")
         if child.text:
             parts.append(child.text)
         for grandchild in child:
-            gc_name = etree.QName(grandchild.tag).localname
-            gc_attribs = " ".join(f'{k}="{v}"' for k, v in grandchild.attrib.items())
+            gc_name = _local(grandchild.tag)
+            gc_attribs = " ".join(
+                f'{_local(k)}="{v}"' for k, v in grandchild.attrib.items()
+            )
             parts.append(f"<{gc_name} {gc_attribs}>" if gc_attribs else f"<{gc_name}>")
             if grandchild.text:
                 parts.append(grandchild.text)
@@ -58,14 +77,9 @@ def _serialize_seg(seg_elem) -> str:
     return "".join(parts)
 
 
-def _detect_tmx_namespace(path: Path) -> Optional[str]:
-    """Peek at the first XML element to determine the namespace used in the file."""
-    try:
-        for _event, elem in etree.iterparse(str(path), events=("start",)):
-            return etree.QName(elem.tag).namespace
-    except Exception:
-        return None
-
+# ---------------------------------------------------------------------------
+# Language detection
+# ---------------------------------------------------------------------------
 
 KNOWN_LANG_CODES = {
     "en", "de", "fr", "es", "it", "pt", "nl", "ru", "pl", "cs", "sk", "hu",
@@ -75,32 +89,31 @@ KNOWN_LANG_CODES = {
 
 
 def detect_tmx_languages(path: Path, max_scan: int = 500) -> list[str]:
-    """Return sorted list of unique primary language subtags found in the TMX file.
+    """Return sorted list of unique primary language subtags found in the TMX.
 
-    Scans at most *max_scan* <tuv> elements so detection stays fast even on
-    very large files (100 MB+).  Language codes appear in every <tu>, so a
-    few hundred elements are always enough to find all of them.
+    Scans at most *max_scan* ``<tuv>`` elements so detection is fast even on
+    very large files.
     """
     try:
-        ns = _detect_tmx_namespace(path)
-        tuv_tag = f"{{{ns}}}tuv" if ns else "tuv"
         langs: set[str] = set()
         scanned = 0
-        for _event, elem in etree.iterparse(str(path), events=("end",), tag=tuv_tag, recover=True):
-            raw = elem.get(XML_LANG) or elem.get("lang") or ""
-            if raw:
-                langs.add(raw.lower().split("-")[0].split("_")[0])
-            parent = elem.getparent()
-            elem.clear()
-            if parent is not None:
-                parent.remove(elem)
-            scanned += 1
-            if scanned >= max_scan:
-                break
+        for _event, elem in _ET.iterparse(str(path), events=("end",)):
+            if _local(elem.tag) == "tuv":
+                raw = elem.get(XML_LANG) or elem.get("lang") or ""
+                if raw:
+                    langs.add(raw.lower().split("-")[0].split("_")[0])
+                elem.clear()
+                scanned += 1
+                if scanned >= max_scan:
+                    break
         return sorted(langs)
     except Exception:
         return []
 
+
+# ---------------------------------------------------------------------------
+# Streaming parser
+# ---------------------------------------------------------------------------
 
 def iter_tmx(
     path: Path,
@@ -108,52 +121,62 @@ def iter_tmx(
     target_lang: str,
     warnings: Optional[List[str]] = None,
     progress_callback=None,
-):
-    """Yield Segment objects one at a time from a TMX file.
+) -> Generator[Segment, None, None]:
+    """Yield :class:`Segment` objects one at a time from a TMX file.
 
-    Appends parse warnings to *warnings* (if provided) rather than raising.
-    Calls *progress_callback(n)* every 5 000 segments if provided.
-    Memory: only one Segment exists at a time — safe for 100k+ segment files.
+    Uses ``xml.etree.ElementTree.iterparse`` (expat) for stable streaming
+    on all platforms.  Appends parse warnings to *warnings* instead of
+    raising, so callers always get partial results on malformed files.
+
+    Memory: only one ``<tu>`` subtree exists at a time.
     """
     if warnings is None:
         warnings = []
 
-    ns = _detect_tmx_namespace(path)
-    tu_tag = f"{{{ns}}}tu" if ns else "tu"
-    tuv_tag = f"{{{ns}}}tuv" if ns else "tuv"
-    seg_tag = f"{{{ns}}}seg" if ns else "seg"
-
     try:
-        context = etree.iterparse(str(path), events=("end",), tag=tu_tag, recover=True)
+        context = _ET.iterparse(str(path), events=("end",))
         idx = 0
         count = 0
 
         for _event, elem in context:
+            local = _local(elem.tag)
+
+            # We only care about <tu> end events; skip everything else.
+            # Sub-elements (tuv, seg) are still live when their parent <tu>
+            # fires, so we can access them here before clearing.
+            if local != "tu":
+                continue
+
             idx += 1
             tuid = elem.get("tuid") or str(idx)
 
             source_text: Optional[str] = None
             target_text: Optional[str] = None
 
-            for tuv in elem.findall(tuv_tag):
-                tuv_lang = _get_tuv_lang(tuv)
-                if not tuv_lang:
+            # {*}tuv matches any namespace — requires Python ≥ 3.8
+            for tuv in elem.findall("{*}tuv") or elem.findall("tuv"):
+                lang = tuv.get(XML_LANG) or tuv.get("lang")
+                if not lang:
                     continue
-                seg_elem = tuv.find(seg_tag)
+                seg_elem = tuv.find("{*}seg") or tuv.find("seg")
                 if seg_elem is None:
                     continue
                 text = _serialize_seg(seg_elem)
-                if _lang_matches(tuv_lang, source_lang):
+                if _lang_matches(lang, source_lang):
                     source_text = text
-                elif _lang_matches(tuv_lang, target_lang):
+                elif _lang_matches(lang, target_lang):
                     target_text = text
 
             if source_text is None:
                 if len(warnings) < MAX_WARNINGS:
-                    warnings.append(f"TU '{tuid}' missing source language '{source_lang}' tuv")
+                    warnings.append(
+                        f"TU '{tuid}' missing source language '{source_lang}' tuv"
+                    )
             elif target_text is None:
                 if len(warnings) < MAX_WARNINGS:
-                    warnings.append(f"TU '{tuid}' missing target language '{target_lang}' tuv")
+                    warnings.append(
+                        f"TU '{tuid}' missing target language '{target_lang}' tuv"
+                    )
             else:
                 count += 1
                 if progress_callback is not None and count % 5_000 == 0:
@@ -166,15 +189,20 @@ def iter_tmx(
                     target_lang=target_lang,
                 )
 
-            # Free the processed <tu> element immediately — keeps memory flat
-            parent = elem.getparent()
+            # Free the processed <tu> subtree immediately — keeps memory flat
             elem.clear()
-            if parent is not None:
-                parent.remove(elem)
 
-    except etree.XMLSyntaxError as e:
+    except _ET.ParseError as e:
         warnings.append(f"XML parse error: {e}")
+    except OSError as e:
+        warnings.append(f"Cannot open TMX file '{path}': {e}")
+    except Exception as e:
+        warnings.append(f"TMX parse error ({type(e).__name__}): {e}")
 
+
+# ---------------------------------------------------------------------------
+# Bulk parser (wraps the streaming iterator)
+# ---------------------------------------------------------------------------
 
 def parse_tmx(
     path: Path,
@@ -184,13 +212,17 @@ def parse_tmx(
 ) -> ParseResult:
     """Parse a TMX file and return all segments as a list.
 
-    For large files prefer *iter_tmx* which yields one Segment at a time.
+    For large files prefer ``iter_tmx`` which yields one ``Segment`` at a time.
     """
     encoding = detect_encoding(path)
     encoding_ok = encoding == "utf-8"
     warnings: List[str] = []
     segments = list(
-        iter_tmx(path, source_lang, target_lang, warnings=warnings, progress_callback=progress_callback)
+        iter_tmx(
+            path, source_lang, target_lang,
+            warnings=warnings,
+            progress_callback=progress_callback,
+        )
     )
     return ParseResult(
         segments=segments,

@@ -15,21 +15,25 @@ class HtmlStatsAccumulator:
     Call :meth:`update` once per segment, then :meth:`write` to produce the
     HTML report.  Full segment text is never retained — only 100-char excerpts
     for flagged segments — so memory stays flat for any TM size.
+
+    The duplicate / untranslated counts come from pass 1 as plain integers
+    (``n_exact_groups``, ``n_same_src_groups``, ``n_untranslated``) rather than
+    as lists of IDs, so no per-segment ID data needs to cross the scan boundary.
     """
 
     def __init__(
         self,
         total_segments: int,
-        exact_groups: List,
-        same_src_diff_tgt_groups: List,
-        untranslated_ids: List[str],
+        n_exact_groups: int,
+        n_same_src_groups: int,
+        n_untranslated: int,
         parse_warnings: List[str],
         options,
     ) -> None:
         self.total = total_segments
-        self.exact_groups = exact_groups
-        self.same_src_diff_tgt_groups = same_src_diff_tgt_groups
-        self.untranslated_ids = untranslated_ids
+        self.n_exact_groups = n_exact_groups
+        self.n_same_src_groups = n_same_src_groups
+        self.n_untranslated = n_untranslated
         self.parse_warnings = parse_warnings
         self.options = options
 
@@ -293,9 +297,9 @@ def _write_html_from_accumulator(acc: HtmlStatsAccumulator, path: Path) -> None:
     source_words = acc.source_words
     target_words = acc.target_words
     check_counter = acc.check_counter
-    exact_dups = acc.exact_groups
-    same_src_dups = acc.same_src_diff_tgt_groups
-    untranslated_ids = acc.untranslated_ids
+    n_exact_groups = acc.n_exact_groups
+    n_same_src_groups = acc.n_same_src_groups
+    n_untranslated = acc.n_untranslated
 
     # Re-use the same HTML template as export_html_report
     parts = ["""<!DOCTYPE html>
@@ -372,29 +376,19 @@ def _write_html_from_accumulator(acc: HtmlStatsAccumulator, path: Path) -> None:
     parts.append("""<div class="section">
 <h2>Duplicates</h2>
 """)
-    parts.append(f"<p><strong>Exact duplicates (same source + target):</strong> {len(exact_dups)} group(s)</p>\n")
-    parts.append(f"<p><strong>Same source, different targets:</strong> {len(same_src_dups)} group(s)</p>\n")
-    if exact_dups:
-        parts.append("<h3>Exact Duplicate Groups</h3>\n<ul>\n")
-        for group in exact_dups[:50]:
-            parts.append(f"  <li>Segments: {html.escape(', '.join(str(g) for g in group))}</li>\n")
-        if len(exact_dups) > 50:
-            parts.append(f"  <li>...and {len(exact_dups) - 50} more groups</li>\n")
-        parts.append("</ul>\n")
+    parts.append(f"<p><strong>Exact duplicates (same source + target):</strong> {n_exact_groups} group(s)</p>\n")
+    parts.append(f"<p><strong>Same source, different targets:</strong> {n_same_src_groups} group(s)</p>\n")
+    if n_exact_groups or n_same_src_groups:
+        parts.append("<p>See the duplicate output file(s) for full details.</p>\n")
     parts.append("</div>\n")
 
     # Untranslated
     parts.append(f"""<div class="section">
 <h2>Untranslated Segments</h2>
-<p><strong>{len(untranslated_ids)}</strong> segment(s) are untranslated (empty or same as source).</p>
+<p><strong>{n_untranslated}</strong> segment(s) are untranslated (empty or same as source).</p>
 """)
-    if untranslated_ids:
-        parts.append("<ul>\n")
-        for sid in untranslated_ids[:50]:
-            parts.append(f"  <li>Segment ID: {html.escape(str(sid))}</li>\n")
-        if len(untranslated_ids) > 50:
-            parts.append(f"  <li>...and {len(untranslated_ids) - 50} more</li>\n")
-        parts.append("</ul>\n")
+    if n_untranslated:
+        parts.append("<p>See the untranslated output file for full details.</p>\n")
     parts.append("</div>\n")
 
     # Flagged segments table

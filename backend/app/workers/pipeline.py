@@ -3,7 +3,7 @@ from __future__ import annotations
 import gc
 import hashlib
 import json
-from collections import defaultdict
+import time
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,6 +15,27 @@ from app.core.config import settings
 from app.workers.celery_app import celery_app
 
 redis_client = redis_lib.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+
+# ---------------------------------------------------------------------------
+# File-based crash log — written synchronously, survives OOM kills
+# ---------------------------------------------------------------------------
+
+def _crash_log(tag: str, job_id: str, detail: str = "") -> None:
+    """Append one timestamped line to {STORAGE_PATH}/crash_log.txt.
+
+    Intentionally bare-bones: no imports that could fail, no formatting that
+    could raise.  Called at every major checkpoint so that even a silent
+    OOM-kill leaves a trace showing the last checkpoint the process reached.
+    """
+    try:
+        log_path = Path(settings.STORAGE_PATH) / "crash_log.txt"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        ts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+        line = f"{ts}  [{tag}]  job={job_id}  {detail}\n"
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write(line)
+    except Exception:
+        pass  # never let logging crash the worker
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +105,24 @@ def _iter_all_files(
 # Pass 1 — lightweight scan
 # ---------------------------------------------------------------------------
 
+def _seg_hashes(source: str, target: str):
+    """Return (src_h, tgt_h, exact_key) as 64/64/128-bit Python ints.
+
+    Shared by _scan_pass and the pass-2 loop so both passes use identical hash
+    logic and therefore produce identical keys for the same segment text.
+    """
+    def _h(text: str) -> int:
+        return int.from_bytes(
+            hashlib.sha256(
+                text.strip().lower().encode("utf-8", errors="replace")
+            ).digest()[:8],
+            "big",
+        )
+    src_h = _h(source)
+    tgt_h = _h(target)
+    return src_h, tgt_h, (src_h << 64) | tgt_h
+
+
 def _scan_pass(
     db_files,
     source_lang: str,
@@ -93,33 +132,42 @@ def _scan_pass(
     n_langs: int,
     pfx: str,
 ) -> tuple:
-    """Stream every segment and record only SHA-256 hashes.
+    """Stream every segment storing ONLY hash integers — no text, no IDs.
 
-    Memory cost: ~140 bytes per segment (two 64-char hex strings + ID) instead
-    of ~20 KB per segment with full text.  Returns (scan_data, parse_warnings).
+    Memory model
+    ------------
+    * ``seen_once``  — set of 128-bit ints for exact_keys seen exactly once.
+                       Discarded entry-by-entry as duplicates are found, then
+                       deleted wholesale after the loop.
+    * ``dup_exact_keys`` — set of 128-bit ints for keys that appear 2+ times.
+                           Typically tiny (only actual duplicates).
+    * ``src_tgt_map`` — dict mapping 64-bit src_hash → first target hash (int)
+                        OR set of target hashes if multiple targets seen.
+                        Uses the cheapest representation per key.
+
+    Peak cost ≈ 147 B/segment (vs ~615 B with UUID strings in value lists).
+    For a 1 M-segment TM: ~147 MB peak, then falls to ~a few MB after the loop.
 
     scan_data keys
     --------------
-    exact_dup_ids        — IDs of exact duplicates (all but the first in each group)
-    same_src_diff_tgt_ids — IDs in same-source / different-target groups
-    exact_groups         — list of ID-lists (for HTML report)
-    same_src_diff_tgt_groups — list of ID-lists (for HTML report)
-    untranslated_id_set  — set of untranslated IDs (fast O(1) lookup)
-    untranslated_ids     — ordered list of untranslated IDs (for HTML report)
-    total                — total segment count
+    dup_exact_keys        — set[int]: 128-bit keys appearing 2+ times
+    conflicting_src_hashes — set[int]: 64-bit src hashes with multiple targets
+    n_exact_groups        — int: duplicate group count (for HTML report)
+    n_same_src_groups     — int: conflicting-source group count (for HTML)
+    n_untranslated        — int: untranslated segment count (for HTML)
+    total                 — int: total segment count
     """
 
-    def _h(text: str) -> str:
-        return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+    # --- exact-dup tracking (no IDs stored) ---
+    seen_once: set = set()       # exact_keys seen exactly once so far
+    dup_exact_keys: set = set()  # exact_keys seen 2+ times
 
-    def _norm(text: str) -> str:
-        return text.strip().lower()
+    # --- same-src-diff-tgt tracking ---
+    # src_h → first tgt_h (int)  OR  set[int] when multiple targets seen.
+    # Storing a plain int avoids the ~220 B overhead of a single-element set.
+    src_tgt_map: dict = {}
 
-    exact_map: Dict[str, List[str]] = defaultdict(list)    # exact_key → [ids]
-    src_map: Dict[str, List[str]] = defaultdict(list)       # src_hash → [ids]
-    src_tgt_map: Dict[str, List[str]] = defaultdict(list)   # src_hash → [tgt_hashes]
-    untranslated_id_set: set = set()
-    untranslated_ids: List[str] = []
+    n_untranslated = 0
     parse_warnings: List[str] = []
     total = 0
 
@@ -131,45 +179,53 @@ def _scan_pass(
     for seg in _iter_all_files(db_files, source_lang, target_lang,
                                parse_warnings, progress_callback=_progress_cb):
         total += 1
+        if total % 1_000 == 0:
+            _crash_log("SCAN_HEARTBEAT", job_id,
+                       f"n={total} seen_once={len(seen_once)} "
+                       f"dups={len(dup_exact_keys)} "
+                       f"src_map={len(src_tgt_map)}")
+        src_h, tgt_h, exact_key = _seg_hashes(seg.source, seg.target)
 
-        src_h = _h(_norm(seg.source))
-        tgt_h = _h(_norm(seg.target))
-        exact_key = src_h + tgt_h
+        # Exact-dup tracking — no IDs, just the hash
+        if exact_key in dup_exact_keys:
+            pass  # already confirmed duplicate; nothing to do
+        elif exact_key in seen_once:
+            dup_exact_keys.add(exact_key)
+            seen_once.discard(exact_key)  # reclaim memory immediately
+        else:
+            seen_once.add(exact_key)
 
-        exact_map[exact_key].append(seg.id)
-        src_map[src_h].append(seg.id)
-        src_tgt_map[src_h].append(tgt_h)
+        # Same-source-different-target tracking
+        existing = src_tgt_map.get(src_h)
+        if existing is None:
+            src_tgt_map[src_h] = tgt_h          # cheapest: plain int
+        elif isinstance(existing, int):
+            if existing != tgt_h:
+                src_tgt_map[src_h] = {existing, tgt_h}  # upgrade to set
+        else:
+            existing.add(tgt_h)                  # already a set
 
+        # Untranslated count (no ID needed — recomputed in pass 2)
         if not seg.target.strip() or src_h == tgt_h:
-            untranslated_id_set.add(seg.id)
-            untranslated_ids.append(seg.id)
+            n_untranslated += 1
 
-    # Build exact-duplicate sets
-    exact_groups = [ids for ids in exact_map.values() if len(ids) > 1]
-    exact_dup_ids: set = set()
-    for group in exact_groups:
-        for sid in group[1:]:   # keep the first occurrence
-            exact_dup_ids.add(sid)
+    # Free the scan-time structures that are no longer needed
+    del seen_once
+    gc.collect()
 
-    # Build same-source-different-target sets
-    same_src_diff_tgt_groups = []
-    same_src_diff_tgt_ids: set = set()
-    for src_h, ids in src_map.items():
-        if len(ids) > 1 and len(set(src_tgt_map[src_h])) > 1:
-            same_src_diff_tgt_groups.append(ids)
-            same_src_diff_tgt_ids.update(ids)
-
-    # Free the large intermediate dicts immediately
-    del exact_map, src_map, src_tgt_map
+    # Derive conflicting-source set (only sources with 2+ distinct targets)
+    conflicting_src_hashes: set = {
+        sh for sh, v in src_tgt_map.items() if isinstance(v, set)
+    }
+    del src_tgt_map
     gc.collect()
 
     scan_data = {
-        "exact_dup_ids": exact_dup_ids,
-        "same_src_diff_tgt_ids": same_src_diff_tgt_ids,
-        "exact_groups": exact_groups,
-        "same_src_diff_tgt_groups": same_src_diff_tgt_groups,
-        "untranslated_id_set": untranslated_id_set,
-        "untranslated_ids": untranslated_ids,
+        "dup_exact_keys": dup_exact_keys,
+        "conflicting_src_hashes": conflicting_src_hashes,
+        "n_exact_groups": len(dup_exact_keys),
+        "n_same_src_groups": len(conflicting_src_hashes),
+        "n_untranslated": n_untranslated,
         "total": total,
     }
     return scan_data, parse_warnings
@@ -181,6 +237,9 @@ def _scan_pass(
 
 @celery_app.task(bind=True)
 def run_pipeline(self, job_id: str) -> None:  # noqa: C901
+    # This is the absolute first line executed — file log survives OOM kills
+    _crash_log("TASK_START", job_id)
+
     from app.core.database import SessionLocal, init_db
     from app.core.security import decrypt_api_key
     from app.models.api_key import ApiKey
@@ -201,6 +260,8 @@ def run_pipeline(self, job_id: str) -> None:  # noqa: C901
     from app.services.qa.untranslated import find_untranslated  # noqa: F401
     from app.services.qa.variables import check_variables
 
+    _crash_log("IMPORTS_DONE", job_id)
+
     db = SessionLocal()
 
     try:
@@ -209,11 +270,20 @@ def run_pipeline(self, job_id: str) -> None:  # noqa: C901
         # ------------------------------------------------------------------ #
         job = db.query(Job).filter(Job.id == job_id).first()
         if not job:
+            _crash_log("JOB_NOT_FOUND", job_id)
+            return
+
+        # Guard: if the startup hook already reset this job to "failed" (because
+        # a previous worker crashed mid-run), don't re-process it — the file may
+        # be the very file that caused the crash.  The user must re-submit.
+        if job.status in ("complete", "failed"):
+            _crash_log("JOB_SKIP_STALE", job_id, f"status={job.status}")
             return
 
         job.status = "running"
         db.commit()
 
+        _crash_log("STATUS_RUNNING", job_id)
         _set_progress(job_id, "starting", 2, "Starting pipeline…")
 
         options = JobOptions(**json.loads(job.options_json))
@@ -239,16 +309,28 @@ def run_pipeline(self, job_id: str) -> None:  # noqa: C901
             _pfx = f"[{target_lang}] " if n_langs > 1 else ""
 
             # -------------------------------------------------------------- #
-            # PASS 1 — lightweight scan (hashes only, ~140 B/segment)
+            # PASS 1 — lightweight scan (hashes only, ~28 B/segment int keys)
             # -------------------------------------------------------------- #
             _set_progress(job_id, "scanning",
                           _lang_progress(lang_idx, n_langs, 3),
                           f"{_pfx}Scanning for duplicates…")
 
+            _crash_log("SCAN_START", job_id,
+                       f"lang={target_lang} n_files={len(db_files)} "
+                       + " ".join(
+                           f"{Path(f.stored_path).name}({Path(f.stored_path).stat().st_size // 1024}KB)"
+                           if Path(f.stored_path).exists() else
+                           f"{Path(f.stored_path).name}(MISSING)"
+                           for f in db_files
+                       ))
             scan_data, parse_warnings = _scan_pass(
                 db_files, source_lang, target_lang,
                 job_id, lang_idx, n_langs, _pfx,
             )
+            _crash_log("SCAN_DONE", job_id,
+                       f"total={scan_data['total']} "
+                       f"dup_groups={scan_data['n_exact_groups']} "
+                       f"ut={scan_data['n_untranslated']}")
 
             total_segments = scan_data["total"]
             if total_segments == 0:
@@ -257,8 +339,8 @@ def run_pipeline(self, job_id: str) -> None:  # noqa: C901
             _set_progress(job_id, "scanning",
                           _lang_progress(lang_idx, n_langs, 20),
                           f"{_pfx}Scanned {total_segments:,} segments — "
-                          f"{len(scan_data['exact_dup_ids'])} duplicates, "
-                          f"{len(scan_data['untranslated_ids'])} untranslated")
+                          f"{scan_data['n_exact_groups']} duplicate groups, "
+                          f"{scan_data['n_untranslated']} untranslated")
 
             # -------------------------------------------------------------- #
             # Load MT engine (if requested)
@@ -299,16 +381,16 @@ def run_pipeline(self, job_id: str) -> None:  # noqa: C901
             ut_xls_path    = output_dir / f"untranslated_{source_lang}_{target_lang}.xlsx"
 
             # Decide which separate-file writers to open
-            has_dups = bool(scan_data["exact_dup_ids"])
-            has_untranslated = bool(scan_data["untranslated_ids"])
+            has_dups = bool(scan_data["dup_exact_keys"])
+            has_untranslated = scan_data["n_untranslated"] > 0
 
             html_acc: Optional[HtmlStatsAccumulator] = None
             if options.outputs_html_report:
                 html_acc = HtmlStatsAccumulator(
                     total_segments=total_segments,
-                    exact_groups=scan_data["exact_groups"],
-                    same_src_diff_tgt_groups=scan_data["same_src_diff_tgt_groups"],
-                    untranslated_ids=scan_data["untranslated_ids"],
+                    n_exact_groups=scan_data["n_exact_groups"],
+                    n_same_src_groups=scan_data["n_same_src_groups"],
+                    n_untranslated=scan_data["n_untranslated"],
                     parse_warnings=parse_warnings,
                     options=options,
                 )
@@ -317,12 +399,25 @@ def run_pipeline(self, job_id: str) -> None:  # noqa: C901
                           _lang_progress(lang_idx, n_langs, 25),
                           f"{_pfx}Running QA checks and writing outputs…")
 
+            _crash_log("PASS2_START", job_id, f"lang={target_lang} total={total_segments}")
             mt_consecutive_errors = 0
             MT_ERROR_LIMIT = 3
             mt_aborted = False
             seg_count = 0
 
+            # Pass-2 exact-dup tracking: we see each segment fresh and mark the
+            # SECOND (and later) occurrence as a duplicate, keeping the first.
+            # Only duplicate groups need tracking here, so this set stays small.
+            seen_exact_p2: set = set()
+
             with ExitStack() as stack:
+                _crash_log("WRITERS_OPEN", job_id,
+                           f"tmx={options.outputs_tmx} "
+                           f"xls={options.outputs_clean_xls} "
+                           f"qa={options.outputs_qa_xls} "
+                           f"dup_sep={options.move_duplicates_to_separate_file} "
+                           f"ut_sep={options.move_untranslated_to_separate_file} "
+                           f"has_dups={has_dups} has_ut={has_untranslated}")
                 # Open only the writers that are actually needed
                 clean_tmx_w = (
                     stack.enter_context(TmxWriter(clean_tmx_path, source_lang, target_lang))
@@ -366,9 +461,21 @@ def run_pipeline(self, job_id: str) -> None:  # noqa: C901
                             f"{_pfx}Processing {seg_count:,} / {total_segments:,} segments…",
                         )
 
-                    is_dup = seg.id in scan_data["exact_dup_ids"]
-                    is_same_src_diff_tgt = seg.id in scan_data["same_src_diff_tgt_ids"]
-                    is_untranslated = seg.id in scan_data["untranslated_id_set"]
+                    # Re-derive hashes — identical logic to _scan_pass so keys match
+                    src_h, tgt_h, exact_key = _seg_hashes(seg.source, seg.target)
+
+                    # Exact-dup: keep first occurrence, mark subsequent as dup
+                    if exact_key in scan_data["dup_exact_keys"]:
+                        if exact_key in seen_exact_p2:
+                            is_dup = True     # 2nd+ occurrence
+                        else:
+                            seen_exact_p2.add(exact_key)
+                            is_dup = False    # 1st occurrence — keep it
+                    else:
+                        is_dup = False
+
+                    is_same_src_diff_tgt = src_h in scan_data["conflicting_src_hashes"]
+                    is_untranslated = (not seg.target.strip()) or (src_h == tgt_h)
 
                     # ---- QA checks (all stateless — no list accumulation) ----
                     issues: List[QAIssue] = []
@@ -455,6 +562,7 @@ def run_pipeline(self, job_id: str) -> None:  # noqa: C901
                         html_acc.update(seg, issues)
 
             # ExitStack.__exit__ has saved/closed all open writer files by here
+            _crash_log("PASS2_DONE", job_id, f"lang={target_lang} wrote={seg_count}")
 
             # ---- Collect output paths ----
             if options.outputs_tmx and clean_tmx_path.exists():
@@ -505,9 +613,14 @@ def run_pipeline(self, job_id: str) -> None:  # noqa: C901
         db.commit()
 
         _set_progress(job_id, "complete", 100, "Done")
+        _crash_log("TASK_COMPLETE", job_id)
 
-    except Exception as exc:
-        error_msg = str(exc)
+    except BaseException as exc:
+        # BaseException catches MemoryError, SystemExit, KeyboardInterrupt —
+        # all of which are silently swallowed by Celery's solo pool on Windows
+        # when using plain "except Exception".
+        error_msg = f"{type(exc).__name__}: {exc}"
+        _crash_log("EXCEPTION", job_id, error_msg[:300])
         try:
             job = db.query(Job).filter(Job.id == job_id).first()
             if job:
@@ -516,7 +629,10 @@ def run_pipeline(self, job_id: str) -> None:  # noqa: C901
                 db.commit()
         except Exception:
             pass
-        _set_progress(job_id, "error", 0, error_msg)
+        try:
+            _set_progress(job_id, "error", 0, error_msg[:300])
+        except Exception:
+            pass
         raise
 
     finally:
