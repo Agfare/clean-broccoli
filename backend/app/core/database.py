@@ -27,5 +27,5 @@ def get_db():
 
 def init_db() -> None:
     # Import all models so that Base.metadata knows about them
-    from app.models import user, job, api_key  # noqa: F401
+    from app.models import api_key, job, user  # noqa: F401
     Base.metadata.create_all(bind=engine)

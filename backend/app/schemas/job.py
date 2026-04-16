@@ -13,6 +13,8 @@ class JobOptions(BaseModel):
     keep_tags_intact: bool = True
     remove_variables: bool = False
     keep_variables_intact: bool = True
+    remove_untranslated: bool = False
+    move_untranslated_to_separate_file: bool = False
     check_numbers: bool = True
     check_scripts: bool = True
     check_untranslated: bool = True

@@ -25,9 +25,11 @@ def _set_progress(job_id: str, step: str, pct: int, msg: str) -> None:
 def run_pipeline(self, job_id: str) -> None:
     from app.core.database import SessionLocal, init_db
     from app.core.security import decrypt_api_key
-    from app.models.user import User  # noqa: F401 — must import before Job to register 'users' in metadata
     from app.models.api_key import ApiKey
     from app.models.job import Job, UploadedFile
+    from app.models.user import (
+        User,  # noqa: F401 — must import before Job to register 'users' in metadata
+    )
     init_db()  # ensure all tables exist in this worker process
     from app.schemas.job import JobOptions
     from app.services.exporters.report import export_html_report
@@ -237,7 +239,9 @@ def run_pipeline(self, job_id: str) -> None:
 
         clean_segments = list(all_segments)
         duplicate_segments: List[Segment] = []
+        untranslated_segments: List[Segment] = []
 
+        # Duplicates: collect separate file first, then optionally remove
         if options.remove_duplicates or options.move_duplicates_to_separate_file:
             dup_id_set = set()
             for group in duplicates.get("exact", []):
@@ -250,7 +254,15 @@ def run_pipeline(self, job_id: str) -> None:
             if options.remove_duplicates:
                 clean_segments = [s for s in clean_segments if s.id not in dup_id_set]
 
-        # Untranslated segments are flagged in the QA output but kept in the clean file
+        # Untranslated: collect separate file first, then optionally remove
+        if untranslated_ids and (options.remove_untranslated or options.move_untranslated_to_separate_file):
+            ut_id_set = set(untranslated_ids)
+
+            if options.move_untranslated_to_separate_file:
+                untranslated_segments = [s for s in clean_segments if s.id in ut_id_set]
+
+            if options.remove_untranslated:
+                clean_segments = [s for s in clean_segments if s.id not in ut_id_set]
 
         # ------------------------------------------------------------------ #
         # 7. Generate outputs
@@ -300,6 +312,15 @@ def run_pipeline(self, job_id: str) -> None:
             dup_xls_path = output_dir / "duplicates.xlsx"
             export_clean_xls(duplicate_segments, dup_xls_path)
             output_files.append(dup_xls_path)
+
+        # Separate untranslated file
+        if options.move_untranslated_to_separate_file and untranslated_segments:
+            ut_tmx_path = output_dir / "untranslated.tmx"
+            export_tmx(untranslated_segments, ut_tmx_path, source_lang, target_lang)
+            output_files.append(ut_tmx_path)
+            ut_xls_path = output_dir / "untranslated.xlsx"
+            export_clean_xls(untranslated_segments, ut_xls_path)
+            output_files.append(ut_xls_path)
 
         # ------------------------------------------------------------------ #
         # 8. Save output file records to DB

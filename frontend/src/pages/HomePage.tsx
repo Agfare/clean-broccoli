@@ -12,6 +12,8 @@ import { Engine, JobOptions } from '../types'
 const defaultOptions: JobOptions = {
   remove_duplicates: false,
   move_duplicates_to_separate_file: false,
+  remove_untranslated: false,
+  move_untranslated_to_separate_file: false,
   remove_tags: false,
   keep_tags_intact: true,
   remove_variables: false,

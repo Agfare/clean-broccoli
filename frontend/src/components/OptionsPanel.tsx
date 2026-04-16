@@ -64,6 +64,28 @@ export default function OptionsPanel({ options, onChange }: Props) {
         )}
       </div>
 
+      {/* Untranslated segments */}
+      <div>
+        <SectionHeader title="Untranslated segments" />
+        <div className="space-y-2">
+          <Checkbox
+            label="Remove untranslated segments from clean output"
+            checked={options.remove_untranslated}
+            onChange={(v) => set('remove_untranslated', v)}
+          />
+          <Checkbox
+            label="Move untranslated segments to separate file"
+            checked={options.move_untranslated_to_separate_file}
+            onChange={(v) => set('move_untranslated_to_separate_file', v)}
+          />
+        </div>
+        {options.remove_untranslated && options.move_untranslated_to_separate_file && (
+          <p className="mt-2 text-xs text-indigo-600">
+            Untranslated segments will be saved to a separate file first, then removed from the clean output.
+          </p>
+        )}
+      </div>
+
       {/* Tag & Variable handling */}
       <div>
         <SectionHeader title="Tag & Variable handling" />

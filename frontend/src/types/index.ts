@@ -18,6 +18,8 @@ export type JobStatus = 'pending' | 'running' | 'complete' | 'failed'
 export interface JobOptions {
   remove_duplicates: boolean
   move_duplicates_to_separate_file: boolean
+  remove_untranslated: boolean
+  move_untranslated_to_separate_file: boolean
   remove_tags: boolean
   keep_tags_intact: boolean
   remove_variables: boolean
