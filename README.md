@@ -162,7 +162,7 @@ You need **three terminals** open at the same time. Make sure Redis is already r
 
 **Terminal 1 — API server** (from `tmclean/backend/`, venv active):
 ```bash
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --reload-dir app --port 8000
 ```
 
 **Terminal 2 — Background worker** (from `tmclean/backend/`, venv active):
