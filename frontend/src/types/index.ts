@@ -14,7 +14,7 @@ export interface UploadedFile {
 }
 
 export type Engine = 'none' | 'anthropic' | 'google' | 'azure' | 'deepl'
-export type JobStatus = 'pending' | 'running' | 'complete' | 'failed'
+export type JobStatus = 'pending' | 'running' | 'complete' | 'failed' | 'cancelled'
 
 export interface JobOptions {
   remove_duplicates: boolean

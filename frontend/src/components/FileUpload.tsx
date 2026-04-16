@@ -9,6 +9,7 @@ interface Props {
   uploadedFiles: UploadedFile[]
   onRemoveFile: (fileId: string) => void
   isUploading: boolean
+  uploadProgress?: number  // 0-100; shown when isUploading is true
 }
 
 function formatBytes(bytes: number): string {
@@ -22,6 +23,7 @@ export default function FileUpload({
   uploadedFiles,
   onRemoveFile,
   isUploading,
+  uploadProgress = 0,
 }: Props) {
   const [isDragOver, setIsDragOver] = useState(false)
   const [sizeErrors, setSizeErrors] = useState<string[]>([])
@@ -86,9 +88,25 @@ export default function FileUpload({
         />
 
         {isUploading ? (
-          <div className="flex flex-col items-center gap-2">
-            <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
-            <p className="text-sm text-gray-500">Uploading...</p>
+          <div className="flex flex-col items-center gap-3 w-full px-2">
+            {uploadProgress > 0 ? (
+              <>
+                <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                  <div
+                    className="bg-indigo-600 h-2 rounded-full transition-all duration-200"
+                    style={{ width: `${uploadProgress}%` }}
+                  />
+                </div>
+                <p className="text-sm text-gray-500">
+                  Uploading… {uploadProgress}%
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+                <p className="text-sm text-gray-500">Uploading…</p>
+              </>
+            )}
           </div>
         ) : (
           <div className="flex flex-col items-center gap-2">

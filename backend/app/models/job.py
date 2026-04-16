@@ -20,6 +20,7 @@ class Job(Base):
     source_lang = Column(String, nullable=False)
     target_lang = Column(String, nullable=False)
     error_message = Column(String, nullable=True)
+    task_id = Column(String, nullable=True)   # Celery AsyncResult.id — used for revocation
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     completed_at = Column(DateTime(timezone=True), nullable=True)
 

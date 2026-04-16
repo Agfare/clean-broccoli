@@ -3,11 +3,15 @@ from __future__ import annotations
 import gc
 import hashlib
 import json
+import logging
+import shutil
 import time
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional
+
+log = logging.getLogger(__name__)
 
 import redis as redis_lib
 
@@ -36,6 +40,39 @@ def _crash_log(tag: str, job_id: str, detail: str = "") -> None:
             fh.write(line)
     except Exception:
         pass  # never let logging crash the worker
+
+
+# ---------------------------------------------------------------------------
+# Cooperative cancellation
+# ---------------------------------------------------------------------------
+
+class JobCancelledError(Exception):
+    """Raised cooperatively when a running job's DB status is set to 'cancelled'.
+
+    Propagates through ExitStack so output-file writers are properly closed
+    before the except block removes the partially-written output directory.
+    """
+
+
+def _is_cancelled(job_id: str) -> bool:
+    """Open a *fresh* DB session and check whether the job has been cancelled.
+
+    A separate session is used deliberately — the long-lived pipeline session
+    may cache stale state and would miss a cancellation written by a concurrent
+    API request.  Returns ``False`` on any error so the pipeline never halts
+    spuriously due to a transient DB glitch.
+    """
+    try:
+        from app.core.database import SessionLocal
+        from app.models.job import Job as _Job
+        _db = SessionLocal()
+        try:
+            _job = _db.query(_Job).filter(_Job.id == job_id).first()
+            return _job is not None and _job.status == "cancelled"
+        finally:
+            _db.close()
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +379,11 @@ def run_pipeline(self, job_id: str) -> None:  # noqa: C901
                           f"{scan_data['n_exact_groups']} duplicate groups, "
                           f"{scan_data['n_untranslated']} untranslated")
 
+            # Cooperative cancellation check — between scan and pass-2
+            if _is_cancelled(job_id):
+                log.info("pipeline: job %s cancelled between scan and pass-2", job_id)
+                raise JobCancelledError(f"Job {job_id} cancelled between scan and pass-2")
+
             # -------------------------------------------------------------- #
             # Load MT engine (if requested)
             # -------------------------------------------------------------- #
@@ -459,6 +501,16 @@ def run_pipeline(self, job_id: str) -> None:  # noqa: C901
                         _set_progress(
                             job_id, "processing", pct,
                             f"{_pfx}Processing {seg_count:,} / {total_segments:,} segments…",
+                        )
+
+                    # Cooperative cancellation — checked every 5 000 segments
+                    if seg_count % 5_000 == 0 and _is_cancelled(job_id):
+                        log.info(
+                            "pipeline: job %s cancelled at pass-2 segment %d",
+                            job_id, seg_count,
+                        )
+                        raise JobCancelledError(
+                            f"Job {job_id} cancelled at pass-2 segment {seg_count}"
                         )
 
                     # Re-derive hashes — identical logic to _scan_pass so keys match
@@ -615,12 +667,55 @@ def run_pipeline(self, job_id: str) -> None:  # noqa: C901
         _set_progress(job_id, "complete", 100, "Done")
         _crash_log("TASK_COMPLETE", job_id)
 
+    except JobCancelledError:
+        # Job was cancelled by the user — status is already 'cancelled' in the
+        # DB (set by the cancel endpoint).  Clean up any output files that were
+        # partially written during this run, then return cleanly so Celery does
+        # not mark the task as failed.
+        _crash_log("CANCELLED", job_id)
+        log.info("pipeline: job %s cancelled — cleaning up output files", job_id)
+        try:
+            # user_id is always set before any JobCancelledError can be raised
+            output_dir = Path(settings.STORAGE_PATH) / str(user_id) / job_id / "output"
+            if output_dir.exists():
+                shutil.rmtree(output_dir, ignore_errors=True)
+                _crash_log("CANCELLED_CLEANUP", job_id, "removed output dir")
+                log.info("pipeline: removed output dir for cancelled job %s", job_id)
+        except Exception as _ce:
+            log.warning("pipeline: cleanup error for cancelled job %s: %s", job_id, _ce)
+        # Clean up input-file DB records and physical files
+        try:
+            _db_inputs = db.query(UploadedFile).filter(UploadedFile.job_id == job_id).all()
+            for _f in _db_inputs:
+                try:
+                    _p = Path(_f.stored_path)
+                    if _p.exists():
+                        _p.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                db.delete(_f)
+            if _db_inputs:
+                db.commit()
+                log.info(
+                    "pipeline: removed %d input file record(s) for cancelled job %s",
+                    len(_db_inputs), job_id,
+                )
+        except Exception as _fe:
+            log.warning("pipeline: file-record cleanup error for cancelled job %s: %s", job_id, _fe)
+        # Delete the Redis progress key (cancel endpoint already set 'cancelled' event)
+        try:
+            redis_client.delete(f"job_progress:{job_id}")
+        except Exception:
+            pass
+        return  # Celery sees SUCCESS — correct, the cancellation was intentional
+
     except BaseException as exc:
         # BaseException catches MemoryError, SystemExit, KeyboardInterrupt —
         # all of which are silently swallowed by Celery's solo pool on Windows
         # when using plain "except Exception".
         error_msg = f"{type(exc).__name__}: {exc}"
         _crash_log("EXCEPTION", job_id, error_msg[:300])
+        log.exception("pipeline: job %s failed: %s", job_id, error_msg[:300])
         try:
             job = db.query(Job).filter(Job.id == job_id).first()
             if job:

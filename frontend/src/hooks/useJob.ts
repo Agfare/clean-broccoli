@@ -18,6 +18,8 @@ interface JobState {
   results: JobResults | null
   isRunning: boolean
   isUploading: boolean
+  uploadProgress: number   // 0-100; non-zero only while isUploading is true
+  isCancelling: boolean
   error: string | null
 }
 
@@ -31,6 +33,8 @@ const initialState: JobState = {
   results: null,
   isRunning: false,
   isUploading: false,
+  uploadProgress: 0,
+  isCancelling: false,
   error: null,
 }
 
@@ -46,15 +50,18 @@ export function useJob() {
   }, [])
 
   const uploadFiles = useCallback(async (files: File[]) => {
-    setState((prev) => ({ ...prev, isUploading: true, error: null }))
+    setState((prev) => ({ ...prev, isUploading: true, uploadProgress: 0, error: null }))
     try {
-      const res = await jobsApi.upload(files)
+      const res = await jobsApi.upload(files, (pct) => {
+        setState((prev) => ({ ...prev, uploadProgress: pct }))
+      })
       const newLangs = res.data.flatMap((f) => f.detected_languages ?? [])
       setState((prev) => ({
         ...prev,
         uploadedFiles: [...prev.uploadedFiles, ...res.data],
         detectedLanguages: [...new Set([...prev.detectedLanguages, ...newLangs])],
         isUploading: false,
+        uploadProgress: 0,
       }))
     } catch (err: unknown) {
       const message =
@@ -62,6 +69,7 @@ export function useJob() {
       setState((prev) => ({
         ...prev,
         isUploading: false,
+        uploadProgress: 0,
         error: message,
       }))
     }
@@ -128,6 +136,7 @@ export function useJob() {
               setState((prev) => ({
                 ...prev,
                 isRunning: false,
+                isCancelling: false,
                 results: resultsRes.data,
                 currentJob: jobRes.data,
               }))
@@ -135,14 +144,28 @@ export function useJob() {
               setState((prev) => ({
                 ...prev,
                 isRunning: false,
+                isCancelling: false,
                 error: 'Failed to fetch results',
               }))
             }
+          } else if (parsed.step === 'cancelled') {
+            closeEventSource()
+            setState((prev) => ({
+              ...prev,
+              isRunning: false,
+              isCancelling: false,
+              progressStep: 'cancelled',
+              progressMessage: 'Job was cancelled',
+              currentJob: prev.currentJob
+                ? { ...prev.currentJob, status: 'cancelled' }
+                : prev.currentJob,
+            }))
           } else if (parsed.step === 'error') {
             closeEventSource()
             setState((prev) => ({
               ...prev,
               isRunning: false,
+              isCancelling: false,
               error: parsed.message,
             }))
           }
@@ -163,6 +186,19 @@ export function useJob() {
     [closeEventSource]
   )
 
+  const cancelJob = useCallback(async () => {
+    const jobId = state.currentJob?.id
+    if (!jobId || !state.isRunning || state.isCancelling) return
+    setState((prev) => ({ ...prev, isCancelling: true }))
+    try {
+      await jobsApi.cancel(jobId)
+      // SSE stream will receive 'cancelled' step and set isRunning=false
+    } catch {
+      // If the cancel request fails, just unset the flag — the user can retry
+      setState((prev) => ({ ...prev, isCancelling: false }))
+    }
+  }, [state.currentJob?.id, state.isRunning, state.isCancelling])
+
   const clearJob = useCallback(() => {
     closeEventSource()
     setState(initialState)
@@ -173,6 +209,7 @@ export function useJob() {
     uploadFiles,
     removeUploadedFile,
     startJob,
+    cancelJob,
     clearJob,
   }
 }

@@ -44,10 +44,13 @@ export default function HomePage() {
     results,
     isRunning,
     isUploading,
+    uploadProgress,
+    isCancelling,
     error,
     uploadFiles,
     removeUploadedFile,
     startJob,
+    cancelJob,
     clearJob,
   } = useJob()
 
@@ -66,6 +69,7 @@ export default function HomePage() {
 
   const showProgress = isRunning || (currentJob !== null && !results)
   const showResults = results !== null
+  const isCancelled = currentJob?.status === 'cancelled'
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -86,6 +90,7 @@ export default function HomePage() {
                   uploadedFiles={uploadedFiles}
                   onRemoveFile={removeUploadedFile}
                   isUploading={isUploading}
+                  uploadProgress={uploadProgress}
                 />
               </div>
 
@@ -113,44 +118,64 @@ export default function HomePage() {
                 <EngineSelector value={engine} onChange={setEngine} />
               </div>
 
-              {/* Run button */}
-              <button
-                onClick={handleRun}
-                disabled={!canRun}
-                className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed text-white px-4 py-3 rounded-md font-medium text-sm transition flex items-center justify-center gap-2"
-              >
-                {isRunning ? (
-                  <>
-                    <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Running...
-                  </>
-                ) : (
-                  <>
-                    <svg
-                      className="w-4 h-4"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
-                      />
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
-                    Run Cleaning Job
-                  </>
-                )}
-              </button>
+              {/* Run / Cancel buttons */}
+              <div className="flex gap-2">
+                <button
+                  onClick={handleRun}
+                  disabled={!canRun}
+                  className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed text-white px-4 py-3 rounded-md font-medium text-sm transition flex items-center justify-center gap-2"
+                >
+                  {isRunning ? (
+                    <>
+                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Running...
+                    </>
+                  ) : (
+                    <>
+                      <svg
+                        className="w-4 h-4"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
+                        />
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                        />
+                      </svg>
+                      Run Cleaning Job
+                    </>
+                  )}
+                </button>
 
-              {uploadedFiles.length === 0 && (
+                {isRunning && (
+                  <button
+                    onClick={cancelJob}
+                    disabled={isCancelling}
+                    title="Cancel this job"
+                    className="px-3 py-3 rounded-md font-medium text-sm border border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center gap-1.5"
+                  >
+                    {isCancelling ? (
+                      <span className="w-4 h-4 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    )}
+                    {isCancelling ? 'Cancelling…' : 'Cancel'}
+                  </button>
+                )}
+              </div>
+
+              {uploadedFiles.length === 0 && !isRunning && (
                 <p className="text-xs text-center text-gray-400">
                   Upload files to enable the run button
                 </p>
@@ -202,6 +227,16 @@ export default function HomePage() {
                     message={progressMessage}
                     status={currentJob?.status ?? 'running'}
                   />
+                  {isCancelled && (
+                    <div className="mt-4 pt-4 border-t border-gray-100">
+                      <button
+                        onClick={clearJob}
+                        className="text-sm text-gray-500 hover:text-gray-700 font-medium transition"
+                      >
+                        ← Start a new job
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
 

@@ -15,6 +15,8 @@ export default function ProgressBar({ progress, step, message, status }: Props) 
       ? 'bg-red-500'
       : status === 'complete'
       ? 'bg-green-500'
+      : status === 'cancelled'
+      ? 'bg-gray-400'
       : 'bg-indigo-600'
 
   const trackColor =
@@ -22,6 +24,8 @@ export default function ProgressBar({ progress, step, message, status }: Props) 
       ? 'bg-red-100'
       : status === 'complete'
       ? 'bg-green-100'
+      : status === 'cancelled'
+      ? 'bg-gray-100'
       : 'bg-indigo-100'
 
   return (
@@ -49,9 +53,9 @@ export default function ProgressBar({ progress, step, message, status }: Props) 
               />
             </svg>
           )}
-          {status === 'failed' && (
+          {(status === 'failed' || status === 'cancelled') && (
             <svg
-              className="w-4 h-4 text-red-600"
+              className={`w-4 h-4 ${status === 'cancelled' ? 'text-gray-400' : 'text-red-600'}`}
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -70,6 +74,8 @@ export default function ProgressBar({ progress, step, message, status }: Props) 
                 ? 'text-red-600'
                 : status === 'complete'
                 ? 'text-green-600'
+                : status === 'cancelled'
+                ? 'text-gray-500'
                 : 'text-indigo-700'
             }`}
           >
@@ -96,6 +102,8 @@ export default function ProgressBar({ progress, step, message, status }: Props) 
               ? 'text-red-600'
               : status === 'complete'
               ? 'text-green-700'
+              : status === 'cancelled'
+              ? 'text-gray-500'
               : 'text-gray-600'
           }`}
         >
