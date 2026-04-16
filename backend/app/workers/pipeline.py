@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import gc
+import hashlib
 import json
 from collections import defaultdict
+from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, Iterator, List, Optional
 
 import redis as redis_lib
 
@@ -15,35 +17,188 @@ from app.workers.celery_app import celery_app
 redis_client = redis_lib.Redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 
+# ---------------------------------------------------------------------------
+# Progress helpers
+# ---------------------------------------------------------------------------
+
 def _set_progress(job_id: str, step: str, pct: int, msg: str) -> None:
     key = f"job_progress:{job_id}"
     value = json.dumps({"step": step, "progress": pct, "message": msg})
     redis_client.set(key, value, ex=3600)
 
 
+def _lang_progress(lang_idx: int, n_langs: int, local_pct: int) -> int:
+    """Map a 0-100 local percentage within one lang pass to global 0-99 progress."""
+    per_lang = 98 // n_langs
+    return lang_idx * per_lang + local_pct * per_lang // 100
+
+
+# ---------------------------------------------------------------------------
+# Streaming segment iterators
+# ---------------------------------------------------------------------------
+
+def _iter_all_files(
+    db_files,
+    source_lang: str,
+    target_lang: str,
+    warnings_list: List[str],
+    progress_callback=None,
+) -> Iterator:
+    """Yield every Segment from every uploaded file, one at a time.
+
+    Delegates to the appropriate parser iterator; appends parse warnings to
+    *warnings_list*.  No segment list is ever accumulated — memory stays flat.
+    """
+    from app.services.parsers.csv import iter_csv
+    from app.services.parsers.tmx import iter_tmx
+    from app.services.parsers.xls import iter_xls
+
+    for db_file in db_files:
+        fpath = Path(db_file.stored_path)
+        ext = fpath.suffix.lower()
+        fname = db_file.original_filename
+        file_warnings: List[str] = []
+
+        cb = None
+        if progress_callback is not None:
+            cb = progress_callback
+
+        if ext == ".tmx":
+            it = iter_tmx(fpath, source_lang, target_lang,
+                          warnings=file_warnings, progress_callback=cb)
+        elif ext in (".xls", ".xlsx"):
+            it = iter_xls(fpath, source_lang, target_lang,
+                          warnings=file_warnings, progress_callback=cb)
+        elif ext == ".csv":
+            it = iter_csv(fpath, source_lang, target_lang,
+                          warnings=file_warnings, progress_callback=cb)
+        else:
+            warnings_list.append(f"Skipping unsupported file: {fname}")
+            continue
+
+        yield from it
+        warnings_list.extend(file_warnings)
+
+
+# ---------------------------------------------------------------------------
+# Pass 1 — lightweight scan
+# ---------------------------------------------------------------------------
+
+def _scan_pass(
+    db_files,
+    source_lang: str,
+    target_lang: str,
+    job_id: str,
+    lang_idx: int,
+    n_langs: int,
+    pfx: str,
+) -> tuple:
+    """Stream every segment and record only SHA-256 hashes.
+
+    Memory cost: ~140 bytes per segment (two 64-char hex strings + ID) instead
+    of ~20 KB per segment with full text.  Returns (scan_data, parse_warnings).
+
+    scan_data keys
+    --------------
+    exact_dup_ids        — IDs of exact duplicates (all but the first in each group)
+    same_src_diff_tgt_ids — IDs in same-source / different-target groups
+    exact_groups         — list of ID-lists (for HTML report)
+    same_src_diff_tgt_groups — list of ID-lists (for HTML report)
+    untranslated_id_set  — set of untranslated IDs (fast O(1) lookup)
+    untranslated_ids     — ordered list of untranslated IDs (for HTML report)
+    total                — total segment count
+    """
+
+    def _h(text: str) -> str:
+        return hashlib.sha256(text.encode("utf-8", errors="replace")).hexdigest()
+
+    def _norm(text: str) -> str:
+        return text.strip().lower()
+
+    exact_map: Dict[str, List[str]] = defaultdict(list)    # exact_key → [ids]
+    src_map: Dict[str, List[str]] = defaultdict(list)       # src_hash → [ids]
+    src_tgt_map: Dict[str, List[str]] = defaultdict(list)   # src_hash → [tgt_hashes]
+    untranslated_id_set: set = set()
+    untranslated_ids: List[str] = []
+    parse_warnings: List[str] = []
+    total = 0
+
+    def _progress_cb(n: int) -> None:
+        pct = _lang_progress(lang_idx, n_langs, 5 + min(13, n // 5_000))
+        _set_progress(job_id, "scanning", pct,
+                      f"{pfx}Scanning… {n:,} segments read")
+
+    for seg in _iter_all_files(db_files, source_lang, target_lang,
+                               parse_warnings, progress_callback=_progress_cb):
+        total += 1
+
+        src_h = _h(_norm(seg.source))
+        tgt_h = _h(_norm(seg.target))
+        exact_key = src_h + tgt_h
+
+        exact_map[exact_key].append(seg.id)
+        src_map[src_h].append(seg.id)
+        src_tgt_map[src_h].append(tgt_h)
+
+        if not seg.target.strip() or src_h == tgt_h:
+            untranslated_id_set.add(seg.id)
+            untranslated_ids.append(seg.id)
+
+    # Build exact-duplicate sets
+    exact_groups = [ids for ids in exact_map.values() if len(ids) > 1]
+    exact_dup_ids: set = set()
+    for group in exact_groups:
+        for sid in group[1:]:   # keep the first occurrence
+            exact_dup_ids.add(sid)
+
+    # Build same-source-different-target sets
+    same_src_diff_tgt_groups = []
+    same_src_diff_tgt_ids: set = set()
+    for src_h, ids in src_map.items():
+        if len(ids) > 1 and len(set(src_tgt_map[src_h])) > 1:
+            same_src_diff_tgt_groups.append(ids)
+            same_src_diff_tgt_ids.update(ids)
+
+    # Free the large intermediate dicts immediately
+    del exact_map, src_map, src_tgt_map
+    gc.collect()
+
+    scan_data = {
+        "exact_dup_ids": exact_dup_ids,
+        "same_src_diff_tgt_ids": same_src_diff_tgt_ids,
+        "exact_groups": exact_groups,
+        "same_src_diff_tgt_groups": same_src_diff_tgt_groups,
+        "untranslated_id_set": untranslated_id_set,
+        "untranslated_ids": untranslated_ids,
+        "total": total,
+    }
+    return scan_data, parse_warnings
+
+
+# ---------------------------------------------------------------------------
+# Celery task
+# ---------------------------------------------------------------------------
+
 @celery_app.task(bind=True)
-def run_pipeline(self, job_id: str) -> None:
+def run_pipeline(self, job_id: str) -> None:  # noqa: C901
     from app.core.database import SessionLocal, init_db
     from app.core.security import decrypt_api_key
     from app.models.api_key import ApiKey
     from app.models.job import Job, UploadedFile
-    from app.models.user import (
-        User,  # noqa: F401 — must import before Job to register 'users' in metadata
-    )
-    init_db()  # ensure all tables exist in this worker process
+    from app.models.user import User  # noqa: F401 — registers 'users' in metadata
+    init_db()
     from app.schemas.job import JobOptions
-    from app.services.exporters.report import export_html_report
-    from app.services.exporters.tmx import export_tmx
-    from app.services.exporters.xls import export_clean_xls, export_qa_xls
-    from app.services.parsers.base import QAIssue, Segment
-    from app.services.parsers.csv import parse_csv
-    from app.services.parsers.tmx import parse_tmx
-    from app.services.parsers.xls import parse_xls
-    from app.services.qa.duplicates import find_duplicates
+    from app.services.exporters.report import HtmlStatsAccumulator
+    from app.services.exporters.tmx import TmxWriter
+    from app.services.exporters.xls import CleanXlsWriter, QaXlsWriter
+    from app.services.parsers.base import QAIssue
+    from app.services.qa.duplicates import (  # noqa: F401 — kept for import hygiene
+        find_duplicates,
+    )
     from app.services.qa.numbers import check_numbers
     from app.services.qa.scripts import check_scripts
     from app.services.qa.tags import check_tags
-    from app.services.qa.untranslated import find_untranslated
+    from app.services.qa.untranslated import find_untranslated  # noqa: F401
     from app.services.qa.variables import check_variables
 
     db = SessionLocal()
@@ -59,7 +214,7 @@ def run_pipeline(self, job_id: str) -> None:
         job.status = "running"
         db.commit()
 
-        _set_progress(job_id, "parsing", 5, "Starting pipeline...")
+        _set_progress(job_id, "starting", 2, "Starting pipeline…")
 
         options = JobOptions(**json.loads(job.options_json))
         source_lang = job.source_lang
@@ -68,7 +223,7 @@ def run_pipeline(self, job_id: str) -> None:
         n_langs = len(target_langs)
 
         # ------------------------------------------------------------------ #
-        # 2. Load uploaded files for this job
+        # 2. Load uploaded files
         # ------------------------------------------------------------------ #
         db_files = db.query(UploadedFile).filter(
             UploadedFile.job_id == job_id,
@@ -80,157 +235,43 @@ def run_pipeline(self, job_id: str) -> None:
 
         output_files: List[Path] = []
 
-        def _lang_progress(lang_idx: int, local_pct: int) -> int:
-            """Map local 0-100 pct within one lang pass to global 0-99 progress."""
-            per_lang = 98 // n_langs
-            return lang_idx * per_lang + local_pct * per_lang // 100
-
         for lang_idx, target_lang in enumerate(target_langs):
             _pfx = f"[{target_lang}] " if n_langs > 1 else ""
 
-            # ------------------------------------------------------------------ #
-            # 3. Parse all files
-            # ------------------------------------------------------------------ #
-            _set_progress(job_id, "parsing", _lang_progress(lang_idx, 5), f"{_pfx}Parsing {len(db_files)} file(s)...")
+            # -------------------------------------------------------------- #
+            # PASS 1 — lightweight scan (hashes only, ~140 B/segment)
+            # -------------------------------------------------------------- #
+            _set_progress(job_id, "scanning",
+                          _lang_progress(lang_idx, n_langs, 3),
+                          f"{_pfx}Scanning for duplicates…")
 
-            all_segments: List[Segment] = []
-            parse_warnings: List[str] = []
+            scan_data, parse_warnings = _scan_pass(
+                db_files, source_lang, target_lang,
+                job_id, lang_idx, n_langs, _pfx,
+            )
 
-            for file_idx, db_file in enumerate(db_files):
-                fpath = Path(db_file.stored_path)
-                ext = fpath.suffix.lower()
-                fname = db_file.original_filename
-
-                _set_progress(
-                    job_id, "parsing", _lang_progress(lang_idx, 6),
-                    f"{_pfx}Parsing {fname}...",
-                )
-
-                # Build a closure so the callback captures the right file name
-                def _make_parse_cb(label: str):
-                    def _cb(n: int) -> None:
-                        pct = _lang_progress(lang_idx, 7 + min(11, n // 5_000))
-                        _set_progress(
-                            job_id, "parsing", pct,
-                            f"{_pfx}Parsing {label} — {n:,} segments...",
-                        )
-                    return _cb
-
-                cb = _make_parse_cb(fname)
-
-                if ext == ".tmx":
-                    result = parse_tmx(fpath, source_lang, target_lang, progress_callback=cb)
-                elif ext in (".xls", ".xlsx"):
-                    result = parse_xls(fpath, source_lang, target_lang, progress_callback=cb)
-                elif ext == ".csv":
-                    result = parse_csv(fpath, source_lang, target_lang, progress_callback=cb)
-                else:
-                    parse_warnings.append(f"Skipping unsupported file: {fname}")
-                    continue
-
-                all_segments.extend(result.segments)
-                parse_warnings.extend(result.warnings)
-
-            if not all_segments:
+            total_segments = scan_data["total"]
+            if total_segments == 0:
                 raise ValueError("No segments were parsed from the input files")
 
-            _set_progress(
-                job_id, "parsing", _lang_progress(lang_idx, 20),
-                f"{_pfx}Parsed {len(all_segments):,} segments",
-            )
-            gc.collect()  # free parse-phase objects before QA
+            _set_progress(job_id, "scanning",
+                          _lang_progress(lang_idx, n_langs, 20),
+                          f"{_pfx}Scanned {total_segments:,} segments — "
+                          f"{len(scan_data['exact_dup_ids'])} duplicates, "
+                          f"{len(scan_data['untranslated_ids'])} untranslated")
 
-            # ------------------------------------------------------------------ #
-            # 4. QA checks
-            # ------------------------------------------------------------------ #
-            # issues_map: segment_id -> list of QAIssue
-            issues_map: Dict[str, List[QAIssue]] = defaultdict(list)
-
-            # Untranslated check
-            _set_progress(job_id, "qa_untranslated", _lang_progress(lang_idx, 25), f"{_pfx}Checking untranslated segments...")
-            if options.check_untranslated:
-                untranslated_ids = find_untranslated(all_segments)
-                for sid in untranslated_ids:
-                    issues_map[sid].append(
-                        QAIssue(
-                            segment_id=sid,
-                            check="untranslated",
-                            severity="error",
-                            message="Segment is untranslated (empty or same as source)",
-                        )
-                    )
-            else:
-                untranslated_ids = []
-
-            # Duplicate check
-            _set_progress(job_id, "qa_duplicates", _lang_progress(lang_idx, 27), f"{_pfx}Checking duplicates...")
-            duplicates = find_duplicates(all_segments)
-            all_dup_ids: set = set()
-            for group in duplicates.get("exact", []):
-                for sid in group[1:]:  # Keep first, mark rest as duplicates
-                    issues_map[sid].append(
-                        QAIssue(
-                            segment_id=sid,
-                            check="duplicate",
-                            severity="warning",
-                            message=f"Exact duplicate of segment {group[0]}",
-                        )
-                    )
-                    all_dup_ids.add(sid)
-            for group in duplicates.get("same_source_diff_target", []):
-                for sid in group:
-                    issues_map[sid].append(
-                        QAIssue(
-                            segment_id=sid,
-                            check="duplicate",
-                            severity="warning",
-                            message="Same source text but different translations exist",
-                        )
-                    )
-
-            # Tag checks
-            _set_progress(job_id, "qa_tags", _lang_progress(lang_idx, 30), f"{_pfx}Checking tags...")
-            for seg in all_segments:
-                tag_issues = check_tags(seg)
-                if tag_issues:
-                    issues_map[seg.id].extend(tag_issues)
-
-            # Variable checks
-            _set_progress(job_id, "qa_variables", _lang_progress(lang_idx, 40), f"{_pfx}Checking variables...")
-            for seg in all_segments:
-                var_issues = check_variables(seg)
-                if var_issues:
-                    issues_map[seg.id].extend(var_issues)
-
-            # Number checks
-            _set_progress(job_id, "qa_numbers", _lang_progress(lang_idx, 50), f"{_pfx}Checking numbers...")
-            if options.check_numbers:
-                for seg in all_segments:
-                    num_issues = check_numbers(seg)
-                    if num_issues:
-                        issues_map[seg.id].extend(num_issues)
-
-            # Script checks
-            if options.check_scripts:
-                _set_progress(job_id, "qa_scripts", _lang_progress(lang_idx, 55), f"{_pfx}Checking scripts...")
-                for seg in all_segments:
-                    script_issues = check_scripts(seg)
-                    if script_issues:
-                        issues_map[seg.id].extend(script_issues)
-
-            gc.collect()  # free QA intermediate structures before MT / export
-
-            # ------------------------------------------------------------------ #
-            # 5. MT scoring (if engine != "none")
-            # ------------------------------------------------------------------ #
+            # -------------------------------------------------------------- #
+            # Load MT engine (if requested)
+            # -------------------------------------------------------------- #
             mt_engine = None
             if job.engine != "none":
-                _set_progress(job_id, "mt", _lang_progress(lang_idx, 60), f"{_pfx}Loading {job.engine} MT engine...")
+                _set_progress(job_id, "mt_init",
+                              _lang_progress(lang_idx, n_langs, 22),
+                              f"{_pfx}Loading {job.engine} engine…")
                 api_key_record = db.query(ApiKey).filter(
                     ApiKey.user_id == user_id,
                     ApiKey.engine == job.engine,
                 ).first()
-
                 if api_key_record:
                     plain_key = decrypt_api_key(api_key_record.encrypted_key)
                     mt_engine = _create_mt_engine(job.engine, plain_key)
@@ -239,129 +280,207 @@ def run_pipeline(self, job_id: str) -> None:
                         f"No API key found for engine '{job.engine}'; skipping MT scoring"
                     )
 
-            if mt_engine is not None:
-                _set_progress(job_id, "mt", _lang_progress(lang_idx, 62), f"{_pfx}Scoring {len(all_segments)} segments with MT engine...")
-                mt_threshold = 0.6
-                consecutive_errors = 0
-                MT_ERROR_LIMIT = 3
-
-                for idx, seg in enumerate(all_segments):
-                    if idx % 10 == 0:
-                        pct = _lang_progress(lang_idx, 62 + int((idx / len(all_segments)) * 15))
-                        _set_progress(job_id, "mt", pct, f"{_pfx}MT scoring segment {idx + 1}/{len(all_segments)}...")
-
-                    try:
-                        mt_translation = mt_engine.translate(seg.source, source_lang, target_lang)
-                        score = mt_engine.similarity_score(mt_translation, seg.target)
-                        consecutive_errors = 0  # reset on success
-
-                        if score < mt_threshold:
-                            issues_map[seg.id].append(
-                                QAIssue(
-                                    segment_id=seg.id,
-                                    check="mt_quality",
-                                    severity="warning",
-                                    message=f"MT quality score {score:.2f} is below threshold {mt_threshold}",
-                                    detail=f"MT translation: {mt_translation[:100]}",
-                                )
-                            )
-                    except Exception as e:
-                        consecutive_errors += 1
-                        parse_warnings.append(f"MT scoring failed for segment {seg.id}: {e}")
-                        if consecutive_errors >= MT_ERROR_LIMIT:
-                            parse_warnings.append(
-                                f"MT scoring aborted after {MT_ERROR_LIMIT} consecutive errors — "
-                                f"check your API key and engine settings."
-                            )
-                            break
-
-            # ------------------------------------------------------------------ #
-            # 6. Apply options: filter/separate duplicates and untranslated
-            # ------------------------------------------------------------------ #
-            _set_progress(job_id, "exporting", _lang_progress(lang_idx, 78), f"{_pfx}Applying options and generating outputs...")
-
-            clean_segments = list(all_segments)
-            duplicate_segments: List[Segment] = []
-            untranslated_segments: List[Segment] = []
-
-            # Duplicates: collect separate file first, then optionally remove
-            if options.remove_duplicates or options.move_duplicates_to_separate_file:
-                dup_id_set = set()
-                for group in duplicates.get("exact", []):
-                    for sid in group[1:]:
-                        dup_id_set.add(sid)
-
-                if options.move_duplicates_to_separate_file:
-                    duplicate_segments = [s for s in clean_segments if s.id in dup_id_set]
-
-                if options.remove_duplicates:
-                    clean_segments = [s for s in clean_segments if s.id not in dup_id_set]
-
-            # Untranslated: collect separate file first, then optionally remove
-            if untranslated_ids and (options.remove_untranslated or options.move_untranslated_to_separate_file):
-                ut_id_set = set(untranslated_ids)
-
-                if options.move_untranslated_to_separate_file:
-                    untranslated_segments = [s for s in clean_segments if s.id in ut_id_set]
-
-                if options.remove_untranslated:
-                    clean_segments = [s for s in clean_segments if s.id not in ut_id_set]
-
-            # ------------------------------------------------------------------ #
-            # 7. Generate outputs
-            # ------------------------------------------------------------------ #
+            # -------------------------------------------------------------- #
+            # PASS 2 — stream + QA + write outputs
+            # Each Segment is created, checked, routed to writers, then freed.
+            # Peak RAM = one Segment + open file handles.
+            # -------------------------------------------------------------- #
             output_dir = Path(settings.STORAGE_PATH) / str(user_id) / job_id / "output"
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            if options.outputs_tmx:
-                tmx_path = output_dir / f"clean_{source_lang}_{target_lang}.tmx"
-                export_tmx(clean_segments, tmx_path, source_lang, target_lang)
-                output_files.append(tmx_path)
+            # Output paths
+            clean_tmx_path = output_dir / f"clean_{source_lang}_{target_lang}.tmx"
+            clean_xls_path = output_dir / f"clean_{source_lang}_{target_lang}.xlsx"
+            qa_xls_path    = output_dir / f"qa_{source_lang}_{target_lang}.xlsx"
+            report_path    = output_dir / f"qa_{source_lang}_{target_lang}.html"
+            dup_tmx_path   = output_dir / f"duplicates_{source_lang}_{target_lang}.tmx"
+            dup_xls_path   = output_dir / f"duplicates_{source_lang}_{target_lang}.xlsx"
+            ut_tmx_path    = output_dir / f"untranslated_{source_lang}_{target_lang}.tmx"
+            ut_xls_path    = output_dir / f"untranslated_{source_lang}_{target_lang}.xlsx"
 
-            if options.outputs_clean_xls:
-                xls_path = output_dir / f"clean_{source_lang}_{target_lang}.xlsx"
-                export_clean_xls(clean_segments, xls_path)
-                output_files.append(xls_path)
+            # Decide which separate-file writers to open
+            has_dups = bool(scan_data["exact_dup_ids"])
+            has_untranslated = bool(scan_data["untranslated_ids"])
 
-            if options.outputs_qa_xls:
-                qa_xls_path = output_dir / f"qa_{source_lang}_{target_lang}.xlsx"
-                export_qa_xls(all_segments, dict(issues_map), qa_xls_path)
-                output_files.append(qa_xls_path)
-
+            html_acc: Optional[HtmlStatsAccumulator] = None
             if options.outputs_html_report:
-                report_path = output_dir / f"qa_{source_lang}_{target_lang}.html"
-                stats_data = {
-                    "total_segments": len(all_segments),
-                    "parse_warnings": parse_warnings,
-                }
-                export_html_report(
-                    all_segments,
-                    dict(issues_map),
-                    duplicates,
-                    untranslated_ids,
-                    options,
-                    stats_data,
-                    report_path,
+                html_acc = HtmlStatsAccumulator(
+                    total_segments=total_segments,
+                    exact_groups=scan_data["exact_groups"],
+                    same_src_diff_tgt_groups=scan_data["same_src_diff_tgt_groups"],
+                    untranslated_ids=scan_data["untranslated_ids"],
+                    parse_warnings=parse_warnings,
+                    options=options,
                 )
+
+            _set_progress(job_id, "processing",
+                          _lang_progress(lang_idx, n_langs, 25),
+                          f"{_pfx}Running QA checks and writing outputs…")
+
+            mt_consecutive_errors = 0
+            MT_ERROR_LIMIT = 3
+            mt_aborted = False
+            seg_count = 0
+
+            with ExitStack() as stack:
+                # Open only the writers that are actually needed
+                clean_tmx_w = (
+                    stack.enter_context(TmxWriter(clean_tmx_path, source_lang, target_lang))
+                    if options.outputs_tmx else None
+                )
+                clean_xls_w = (
+                    stack.enter_context(CleanXlsWriter(clean_xls_path))
+                    if options.outputs_clean_xls else None
+                )
+                qa_xls_w = (
+                    stack.enter_context(QaXlsWriter(qa_xls_path))
+                    if options.outputs_qa_xls else None
+                )
+                dup_tmx_w = (
+                    stack.enter_context(TmxWriter(dup_tmx_path, source_lang, target_lang))
+                    if (options.move_duplicates_to_separate_file and has_dups) else None
+                )
+                dup_xls_w = (
+                    stack.enter_context(CleanXlsWriter(dup_xls_path))
+                    if (options.move_duplicates_to_separate_file and has_dups) else None
+                )
+                ut_tmx_w = (
+                    stack.enter_context(TmxWriter(ut_tmx_path, source_lang, target_lang))
+                    if (options.move_untranslated_to_separate_file and has_untranslated) else None
+                )
+                ut_xls_w = (
+                    stack.enter_context(CleanXlsWriter(ut_xls_path))
+                    if (options.move_untranslated_to_separate_file and has_untranslated) else None
+                )
+
+                for seg in _iter_all_files(db_files, source_lang, target_lang, parse_warnings):
+                    seg_count += 1
+
+                    if seg_count % 1_000 == 0:
+                        pct = _lang_progress(
+                            lang_idx, n_langs,
+                            25 + int(seg_count / total_segments * 65),
+                        )
+                        _set_progress(
+                            job_id, "processing", pct,
+                            f"{_pfx}Processing {seg_count:,} / {total_segments:,} segments…",
+                        )
+
+                    is_dup = seg.id in scan_data["exact_dup_ids"]
+                    is_same_src_diff_tgt = seg.id in scan_data["same_src_diff_tgt_ids"]
+                    is_untranslated = seg.id in scan_data["untranslated_id_set"]
+
+                    # ---- QA checks (all stateless — no list accumulation) ----
+                    issues: List[QAIssue] = []
+
+                    if is_untranslated and options.check_untranslated:
+                        issues.append(QAIssue(
+                            segment_id=seg.id, check="untranslated", severity="error",
+                            message="Segment is untranslated (empty or same as source)",
+                        ))
+
+                    if is_dup:
+                        issues.append(QAIssue(
+                            segment_id=seg.id, check="duplicate", severity="warning",
+                            message="Exact duplicate segment",
+                        ))
+                    if is_same_src_diff_tgt:
+                        issues.append(QAIssue(
+                            segment_id=seg.id, check="duplicate", severity="warning",
+                            message="Same source text but different translations exist",
+                        ))
+
+                    issues.extend(check_tags(seg))
+                    issues.extend(check_variables(seg))
+                    if options.check_numbers:
+                        issues.extend(check_numbers(seg))
+                    if options.check_scripts:
+                        issues.extend(check_scripts(seg))
+
+                    # ---- MT scoring ----
+                    if mt_engine and not mt_aborted and not is_untranslated:
+                        try:
+                            mt_translation = mt_engine.translate(
+                                seg.source, source_lang, target_lang
+                            )
+                            score = mt_engine.similarity_score(mt_translation, seg.target)
+                            mt_consecutive_errors = 0
+                            if score < 0.6:
+                                issues.append(QAIssue(
+                                    segment_id=seg.id, check="mt_quality",
+                                    severity="warning",
+                                    message=f"MT quality score {score:.2f} is below threshold 0.60",
+                                    detail=f"MT translation: {mt_translation[:100]}",
+                                ))
+                        except Exception as e:
+                            mt_consecutive_errors += 1
+                            parse_warnings.append(
+                                f"MT scoring failed for segment {seg.id}: {e}"
+                            )
+                            if mt_consecutive_errors >= MT_ERROR_LIMIT:
+                                mt_aborted = True
+                                parse_warnings.append(
+                                    f"MT scoring aborted after {MT_ERROR_LIMIT} consecutive "
+                                    f"errors — check your API key and engine settings."
+                                )
+
+                    # ---- Route to output writers ----
+                    exclude_from_clean = (
+                        (options.remove_duplicates and is_dup)
+                        or (options.remove_untranslated and is_untranslated)
+                    )
+
+                    if not exclude_from_clean:
+                        if clean_tmx_w:
+                            clean_tmx_w.write(seg)
+                        if clean_xls_w:
+                            clean_xls_w.write(seg)
+
+                    if is_dup and options.move_duplicates_to_separate_file:
+                        if dup_tmx_w:
+                            dup_tmx_w.write(seg)
+                        if dup_xls_w:
+                            dup_xls_w.write(seg)
+
+                    if is_untranslated and options.move_untranslated_to_separate_file:
+                        if ut_tmx_w:
+                            ut_tmx_w.write(seg)
+                        if ut_xls_w:
+                            ut_xls_w.write(seg)
+
+                    if qa_xls_w:
+                        qa_xls_w.write(seg, issues)
+
+                    if html_acc:
+                        html_acc.update(seg, issues)
+
+            # ExitStack.__exit__ has saved/closed all open writer files by here
+
+            # ---- Collect output paths ----
+            if options.outputs_tmx and clean_tmx_path.exists():
+                output_files.append(clean_tmx_path)
+            if options.outputs_clean_xls and clean_xls_path.exists():
+                output_files.append(clean_xls_path)
+            if options.outputs_qa_xls and qa_xls_path.exists():
+                output_files.append(qa_xls_path)
+            if html_acc:
+                _set_progress(job_id, "report",
+                              _lang_progress(lang_idx, n_langs, 92),
+                              f"{_pfx}Writing HTML report…")
+                html_acc.write(report_path)
                 output_files.append(report_path)
+            if options.move_duplicates_to_separate_file and has_dups:
+                if dup_tmx_path.exists():
+                    output_files.append(dup_tmx_path)
+                if dup_xls_path.exists():
+                    output_files.append(dup_xls_path)
+            if options.move_untranslated_to_separate_file and has_untranslated:
+                if ut_tmx_path.exists():
+                    output_files.append(ut_tmx_path)
+                if ut_xls_path.exists():
+                    output_files.append(ut_xls_path)
 
-            # Separate duplicates file
-            if options.move_duplicates_to_separate_file and duplicate_segments:
-                dup_tmx_path = output_dir / f"duplicates_{source_lang}_{target_lang}.tmx"
-                export_tmx(duplicate_segments, dup_tmx_path, source_lang, target_lang)
-                output_files.append(dup_tmx_path)
-                dup_xls_path = output_dir / f"duplicates_{source_lang}_{target_lang}.xlsx"
-                export_clean_xls(duplicate_segments, dup_xls_path)
-                output_files.append(dup_xls_path)
-
-            # Separate untranslated file
-            if options.move_untranslated_to_separate_file and untranslated_segments:
-                ut_tmx_path = output_dir / f"untranslated_{source_lang}_{target_lang}.tmx"
-                export_tmx(untranslated_segments, ut_tmx_path, source_lang, target_lang)
-                output_files.append(ut_tmx_path)
-                ut_xls_path = output_dir / f"untranslated_{source_lang}_{target_lang}.xlsx"
-                export_clean_xls(untranslated_segments, ut_xls_path)
-                output_files.append(ut_xls_path)
+            gc.collect()
 
         # ------------------------------------------------------------------ #
         # 8. Save output file records to DB
@@ -389,7 +508,6 @@ def run_pipeline(self, job_id: str) -> None:
 
     except Exception as exc:
         error_msg = str(exc)
-
         try:
             job = db.query(Job).filter(Job.id == job_id).first()
             if job:
@@ -398,7 +516,6 @@ def run_pipeline(self, job_id: str) -> None:
                 db.commit()
         except Exception:
             pass
-
         _set_progress(job_id, "error", 0, error_msg)
         raise
 

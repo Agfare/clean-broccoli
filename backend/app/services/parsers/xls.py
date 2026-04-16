@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Generator, List, Optional, Tuple
 
 import openpyxl
 
@@ -72,93 +72,105 @@ def _detect_columns(headers: List[Optional[str]], source_lang: str, target_lang:
     return source_idx, target_idx
 
 
-def parse_xls(path: Path, source_lang: str, target_lang: str, progress_callback=None) -> ParseResult:
-    warnings: List[str] = []
-    encoding_ok = True  # XLS/XLSX are binary formats
+def _row_to_segment(
+    row, src_col: int, tgt_col: int, row_num: int,
+    source_lang: str, target_lang: str,
+) -> Optional[Segment]:
+    """Convert a raw openpyxl row to a Segment, or None if the row is blank."""
+    def _cell(col_idx: int) -> str:
+        if col_idx < len(row) and row[col_idx] is not None:
+            return str(row[col_idx]).strip()
+        return ""
+
+    src = _cell(src_col)
+    tgt = _cell(tgt_col)
+    if not src and not tgt:
+        return None
+    return Segment(
+        id=str(row_num),
+        source=src,
+        target=tgt,
+        source_lang=source_lang,
+        target_lang=target_lang,
+    )
+
+
+def iter_xls(
+    path: Path,
+    source_lang: str,
+    target_lang: str,
+    warnings: Optional[List[str]] = None,
+    progress_callback=None,
+) -> Generator[Segment, None, None]:
+    """Yield Segment objects one at a time from an XLS/XLSX file.
+
+    Uses openpyxl read-only mode so rows are streamed from disk — memory stays
+    flat regardless of file size.  Appends parse warnings to *warnings*.
+    """
+    if warnings is None:
+        warnings = []
 
     try:
         wb = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
     except Exception as e:
-        return ParseResult(
-            segments=[],
-            warnings=[f"Failed to open XLS file: {e}"],
-            encoding_ok=encoding_ok,
-            source_lang=source_lang,
-            target_lang=target_lang,
-        )
+        warnings.append(f"Failed to open XLS file: {e}")
+        return
 
     ws = wb.active
     if ws is None:
-        return ParseResult(
-            segments=[],
-            warnings=["No active sheet found"],
-            encoding_ok=encoding_ok,
-            source_lang=source_lang,
-            target_lang=target_lang,
-        )
+        warnings.append("No active sheet found")
+        wb.close()
+        return
 
-    all_rows = list(ws.iter_rows(values_only=True))
-    if not all_rows:
-        return ParseResult(
-            segments=[],
-            warnings=["Sheet is empty"],
-            encoding_ok=encoding_ok,
-            source_lang=source_lang,
-            target_lang=target_lang,
-        )
+    row_iter = ws.iter_rows(values_only=True)
+    first_raw = next(row_iter, None)
+    if first_raw is None:
+        warnings.append("Sheet is empty")
+        wb.close()
+        return
 
-    # Determine if first row is a header
-    first_row = [str(c) if c is not None else None for c in all_rows[0]]
+    first_strs = [str(c) if c is not None else None for c in first_raw]
     has_header = any(
         c and isinstance(c, str) and not c.strip().lstrip("-").replace(".", "").isdigit()
-        for c in first_row
+        for c in first_strs
     )
 
     if has_header:
-        src_col, tgt_col = _detect_columns(first_row, source_lang, target_lang)
-        data_rows = all_rows[1:]
+        src_col, tgt_col = _detect_columns(first_strs, source_lang, target_lang)
         start_row = 2
     else:
         src_col, tgt_col = 0, 1
-        data_rows = all_rows
         start_row = 1
+        seg = _row_to_segment(first_raw, src_col, tgt_col, 1, source_lang, target_lang)
+        if seg:
+            yield seg
 
-    segments: List[Segment] = []
-    for row_offset, row in enumerate(data_rows):
+    count = 0
+    for row_offset, row in enumerate(row_iter):
         row_num = start_row + row_offset
-
-        if all(c is None or str(c).strip() == "" for c in row):
-            continue
-
-        def get_cell(col_idx: int) -> str:
-            if col_idx < len(row) and row[col_idx] is not None:
-                return str(row[col_idx]).strip()
-            return ""
-
-        source_text = get_cell(src_col)
-        target_text = get_cell(tgt_col)
-
-        if not source_text and not target_text:
-            continue
-
-        segments.append(
-            Segment(
-                id=str(row_num),
-                source=source_text,
-                target=target_text,
-                source_lang=source_lang,
-                target_lang=target_lang,
-            )
-        )
-        if progress_callback is not None and len(segments) % 5_000 == 0:
-            progress_callback(len(segments))
+        seg = _row_to_segment(row, src_col, tgt_col, row_num, source_lang, target_lang)
+        if seg:
+            count += 1
+            if progress_callback is not None and count % 5_000 == 0:
+                progress_callback(count)
+            yield seg
 
     wb.close()
 
+
+def parse_xls(path: Path, source_lang: str, target_lang: str, progress_callback=None) -> ParseResult:
+    """Parse XLS/XLSX and return all segments as a list.
+
+    For large files prefer *iter_xls* which yields one Segment at a time.
+    """
+    warnings: List[str] = []
+    segments = list(
+        iter_xls(path, source_lang, target_lang, warnings=warnings, progress_callback=progress_callback)
+    )
     return ParseResult(
         segments=segments,
         warnings=warnings,
-        encoding_ok=encoding_ok,
+        encoding_ok=True,
         source_lang=source_lang,
         target_lang=target_lang,
     )

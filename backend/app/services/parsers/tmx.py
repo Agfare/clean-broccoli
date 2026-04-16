@@ -102,38 +102,35 @@ def detect_tmx_languages(path: Path, max_scan: int = 500) -> list[str]:
         return []
 
 
-def parse_tmx(
+def iter_tmx(
     path: Path,
     source_lang: str,
     target_lang: str,
+    warnings: Optional[List[str]] = None,
     progress_callback=None,
-) -> ParseResult:
-    """Parse a TMX file and return segments.
+):
+    """Yield Segment objects one at a time from a TMX file.
 
-    *progress_callback*, if provided, is called as ``callback(n_parsed: int)``
-    every 5 000 segments so the caller can emit live progress updates.
+    Appends parse warnings to *warnings* (if provided) rather than raising.
+    Calls *progress_callback(n)* every 5 000 segments if provided.
+    Memory: only one Segment exists at a time — safe for 100k+ segment files.
     """
-    warnings: List[str] = []
-    encoding = detect_encoding(path)
-    encoding_ok = encoding == "utf-8"
-    segments: List[Segment] = []
+    if warnings is None:
+        warnings = []
 
-    # Detect namespace once up front so iterparse can filter by exact tag
     ns = _detect_tmx_namespace(path)
     tu_tag = f"{{{ns}}}tu" if ns else "tu"
     tuv_tag = f"{{{ns}}}tuv" if ns else "tuv"
     seg_tag = f"{{{ns}}}seg" if ns else "seg"
 
     try:
-        # tag= filter means lxml only fires "end" events for <tu> elements,
-        # skipping every other node — much faster for large files.
         context = etree.iterparse(str(path), events=("end",), tag=tu_tag, recover=True)
         idx = 0
+        count = 0
 
         for _event, elem in context:
             idx += 1
             tuid = elem.get("tuid") or str(idx)
-            metadata = dict(elem.attrib)
 
             source_text: Optional[str] = None
             target_text: Optional[str] = None
@@ -142,10 +139,10 @@ def parse_tmx(
                 tuv_lang = _get_tuv_lang(tuv)
                 if not tuv_lang:
                     continue
-                seg = tuv.find(seg_tag)
-                if seg is None:
+                seg_elem = tuv.find(seg_tag)
+                if seg_elem is None:
                     continue
-                text = _serialize_seg(seg)
+                text = _serialize_seg(seg_elem)
                 if _lang_matches(tuv_lang, source_lang):
                     source_text = text
                 elif _lang_matches(tuv_lang, target_lang):
@@ -158,35 +155,43 @@ def parse_tmx(
                 if len(warnings) < MAX_WARNINGS:
                     warnings.append(f"TU '{tuid}' missing target language '{target_lang}' tuv")
             else:
-                segments.append(
-                    Segment(
-                        id=tuid,
-                        source=source_text,
-                        target=target_text,
-                        source_lang=source_lang,
-                        target_lang=target_lang,
-                        # metadata deliberately omitted — TMX attributes (~500 B/segment)
-                        # are never read by any exporter and waste ~80 MB on large files.
-                    )
+                count += 1
+                if progress_callback is not None and count % 5_000 == 0:
+                    progress_callback(count)
+                yield Segment(
+                    id=tuid,
+                    source=source_text,
+                    target=target_text,
+                    source_lang=source_lang,
+                    target_lang=target_lang,
                 )
-                if progress_callback is not None and len(segments) % 5_000 == 0:
-                    progress_callback(len(segments))
 
-            # Free the processed <tu> element immediately to keep memory flat
+            # Free the processed <tu> element immediately — keeps memory flat
             parent = elem.getparent()
             elem.clear()
             if parent is not None:
                 parent.remove(elem)
 
     except etree.XMLSyntaxError as e:
-        return ParseResult(
-            segments=[],
-            warnings=[f"XML parse error: {e}"],
-            encoding_ok=encoding_ok,
-            source_lang=source_lang,
-            target_lang=target_lang,
-        )
+        warnings.append(f"XML parse error: {e}")
 
+
+def parse_tmx(
+    path: Path,
+    source_lang: str,
+    target_lang: str,
+    progress_callback=None,
+) -> ParseResult:
+    """Parse a TMX file and return all segments as a list.
+
+    For large files prefer *iter_tmx* which yields one Segment at a time.
+    """
+    encoding = detect_encoding(path)
+    encoding_ok = encoding == "utf-8"
+    warnings: List[str] = []
+    segments = list(
+        iter_tmx(path, source_lang, target_lang, warnings=warnings, progress_callback=progress_callback)
+    )
     return ParseResult(
         segments=segments,
         warnings=warnings,

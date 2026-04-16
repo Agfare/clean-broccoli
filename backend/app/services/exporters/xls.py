@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Dict, List
 
 import openpyxl
+from openpyxl.cell.cell import WriteOnlyCell
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
@@ -111,6 +112,155 @@ def export_qa_xls(
     _add_legend_sheet(wb)
     _auto_width(ws)
     wb.save(str(path))
+
+
+class CleanXlsWriter:
+    """Context-manager streaming writer for clean-segments XLSX.
+
+    Uses openpyxl write-only mode so each row is flushed to disk immediately —
+    memory stays flat regardless of how many segments are written.
+
+    Usage::
+
+        with CleanXlsWriter(path) as w:
+            for seg in segments:
+                w.write(seg)
+    """
+
+    _HEADERS = ["ID", "Source", "Target", "Source Lang", "Target Lang"]
+    _COL_WIDTHS = [15, 50, 50, 14, 14]
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._wb = None
+        self._ws = None
+
+    def __enter__(self) -> "CleanXlsWriter":
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._wb = openpyxl.Workbook(write_only=True)
+        self._ws = self._wb.create_sheet("Clean Segments")
+        for i, w in enumerate(self._COL_WIDTHS, start=1):
+            self._ws.column_dimensions[get_column_letter(i)].width = w
+        header_cells = []
+        for h in self._HEADERS:
+            c = WriteOnlyCell(self._ws, value=h)
+            c.fill = _HEADER_FILL
+            c.font = _HEADER_FONT
+            header_cells.append(c)
+        self._ws.append(header_cells)
+        return self
+
+    def write(self, seg: Segment) -> None:
+        self._ws.append([seg.id, seg.source, seg.target, seg.source_lang, seg.target_lang])
+
+    def __exit__(self, *args) -> None:
+        _add_legend_sheet_writeonly(self._wb)
+        self._wb.save(str(self._path))
+        return False
+
+
+class QaXlsWriter:
+    """Context-manager streaming writer for QA-report XLSX.
+
+    Each segment+issues pair is written row-by-row with colour-coding, so
+    memory stays flat no matter how many segments there are.
+
+    Usage::
+
+        with QaXlsWriter(path) as w:
+            for seg, issues in seg_issue_pairs:
+                w.write(seg, issues)
+    """
+
+    _HEADERS = ["ID", "Source", "Target", "Source Lang", "Target Lang",
+                "QA Issues", "Severity", "Issue Details"]
+    _COL_WIDTHS = [15, 40, 40, 14, 14, 22, 12, 55]
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._wb = None
+        self._ws = None
+
+    def __enter__(self) -> "QaXlsWriter":
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._wb = openpyxl.Workbook(write_only=True)
+        self._ws = self._wb.create_sheet("QA Report")
+        for i, w in enumerate(self._COL_WIDTHS, start=1):
+            self._ws.column_dimensions[get_column_letter(i)].width = w
+        header_cells = []
+        for h in self._HEADERS:
+            c = WriteOnlyCell(self._ws, value=h)
+            c.fill = _HEADER_FILL
+            c.font = _HEADER_FONT
+            header_cells.append(c)
+        self._ws.append(header_cells)
+        return self
+
+    def write(self, seg: Segment, issues: List[QAIssue]) -> None:
+        has_error = any(i.severity == "error" for i in issues)
+        has_warning = any(i.severity == "warning" for i in issues)
+        if has_error:
+            row_fill = _RED_FILL
+            severity_label = "error"
+        elif has_warning:
+            row_fill = _YELLOW_FILL
+            severity_label = "warning"
+        else:
+            row_fill = _GREEN_FILL
+            severity_label = "clean"
+
+        issue_types = ", ".join(sorted({i.check for i in issues})) if issues else ""
+        issue_details = "; ".join(i.message for i in issues) if issues else ""
+
+        values = [seg.id, seg.source, seg.target, seg.source_lang, seg.target_lang,
+                  issue_types, severity_label, issue_details]
+        row_cells = []
+        for v in values:
+            c = WriteOnlyCell(self._ws, value=v)
+            c.fill = row_fill
+            row_cells.append(c)
+        self._ws.append(row_cells)
+
+    def __exit__(self, *args) -> None:
+        _add_legend_sheet_writeonly(self._wb)
+        self._wb.save(str(self._path))
+        return False
+
+
+def _add_legend_sheet_writeonly(wb: openpyxl.Workbook) -> None:
+    """Add a colour-legend sheet to a *write-only* workbook."""
+    ls = wb.create_sheet(title="Legend")
+
+    hc = WriteOnlyCell(ls, value="Color Legend")
+    hc.font = _BOLD_FONT
+    hc.fill = _LEGEND_HEADER_FILL
+    ls.append([hc])
+
+    for fill, name, desc in [
+        (_RED_FILL,    "Red",    "Segment has one or more ERROR-level QA issues"),
+        (_YELLOW_FILL, "Yellow", "Segment has one or more WARNING-level QA issues"),
+        (_GREEN_FILL,  "Green",  "Segment passed all QA checks"),
+    ]:
+        nc = WriteOnlyCell(ls, value=name)
+        nc.fill = fill
+        ls.append([nc, desc])
+
+    ls.append([])
+
+    tc = WriteOnlyCell(ls, value="QA Check Types")
+    tc.font = _BOLD_FONT
+    ls.append([tc])
+
+    for check, desc in [
+        ("tags",         "Inline tag count mismatch between source and target"),
+        ("variables",    "Variable/placeholder mismatch"),
+        ("numbers",      "Numeric value mismatch"),
+        ("scripts",      "Unexpected character script for target language"),
+        ("untranslated", "Target is empty or identical to source"),
+        ("duplicate",    "Duplicate segment found"),
+        ("mt_quality",   "MT quality score below threshold"),
+    ]:
+        ls.append([check, desc])
 
 
 def _add_legend_sheet(wb: openpyxl.Workbook) -> None:
