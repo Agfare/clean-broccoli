@@ -13,9 +13,9 @@ const defaultOptions: JobOptions = {
   remove_duplicates: false,
   move_duplicates_to_separate_file: false,
   remove_tags: false,
-  keep_tags_intact: false,
+  keep_tags_intact: true,
   remove_variables: false,
-  keep_variables_intact: false,
+  keep_variables_intact: true,
   check_numbers: true,
   check_scripts: true,
   check_untranslated: true,
@@ -104,14 +104,6 @@ export default function HomePage() {
                   MT Engine
                 </h2>
                 <EngineSelector value={engine} onChange={setEngine} />
-              </div>
-
-              {/* Options */}
-              <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6">
-                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
-                  Processing Options
-                </h2>
-                <OptionsPanel options={options} onChange={setOptions} />
               </div>
 
               {/* Run button */}
@@ -224,7 +216,7 @@ export default function HomePage() {
 
               {/* Empty state */}
               {!showProgress && !showResults && !error && (
-                <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-12 text-center">
+                <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-12 text-center mb-6">
                   <svg
                     className="w-16 h-16 text-gray-200 mx-auto mb-4"
                     fill="none"
@@ -247,6 +239,14 @@ export default function HomePage() {
                   </p>
                 </div>
               )}
+
+              {/* Processing options — always visible, below the action area */}
+              <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6">
+                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
+                  Processing Options
+                </h2>
+                <OptionsPanel options={options} onChange={setOptions} />
+              </div>
             </div>
           </div>
         </div>

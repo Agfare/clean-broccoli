@@ -47,7 +47,7 @@ export default function OptionsPanel({ options, onChange }: Props) {
         <SectionHeader title="Duplicate handling" />
         <div className="space-y-2">
           <Checkbox
-            label="Remove duplicates"
+            label="Remove duplicates from clean output"
             checked={options.remove_duplicates}
             onChange={(v) => set('remove_duplicates', v)}
           />
@@ -57,6 +57,11 @@ export default function OptionsPanel({ options, onChange }: Props) {
             onChange={(v) => set('move_duplicates_to_separate_file', v)}
           />
         </div>
+        {options.remove_duplicates && options.move_duplicates_to_separate_file && (
+          <p className="mt-2 text-xs text-indigo-600">
+            Duplicates will be saved to a separate file first, then removed from the clean output.
+          </p>
+        )}
       </div>
 
       {/* Tag & Variable handling */}
