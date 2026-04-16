@@ -19,15 +19,30 @@ from app.services.parsers.xls import detect_xls_languages
 router = APIRouter(prefix="/files", tags=["files"])
 
 ALLOWED_EXTENSIONS = {".tmx", ".xls", ".xlsx", ".csv"}
+_CHUNK = 1024 * 1024  # 1 MB read chunks
 
 
-def _validate_xml(content: bytes) -> bool:
+def _validate_xml_file(path: Path) -> bool:
+    """Quick well-formedness check using a streaming parser — no full DOM load."""
     try:
         from lxml import etree
-        etree.fromstring(content)
+
+        context = etree.iterparse(str(path), events=("start",), recover=False)
+        next(iter(context))  # parse just enough to reach the root element
         return True
     except Exception:
         return False
+
+
+def _check_encoding(path: Path) -> str:
+    """Sample the first 8 KB to detect encoding without reading the whole file."""
+    with open(path, "rb") as f:
+        sample = f.read(8192)
+    try:
+        sample.decode("utf-8")
+        return "utf-8"
+    except UnicodeDecodeError:
+        return "latin-1"
 
 
 @router.post("/upload")
@@ -53,58 +68,68 @@ async def upload_files(
                 detail=f"File '{filename}' has unsupported extension '{ext}'. Allowed: {', '.join(ALLOWED_EXTENSIONS)}",
             )
 
-        content = await upload.read()
+        # ── Stream to disk in chunks, enforcing size limit ────────────────────
+        file_id = str(uuid.uuid4())
+        stored_name = f"{file_id}_{filename}"
+        stored_path = Path(upload_dir / stored_name)
 
-        if len(content) > max_bytes:
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=f"File '{filename}' exceeds maximum size of {settings.MAX_FILE_SIZE_MB} MB",
-            )
-
-        # Check encoding
+        total_bytes = 0
         try:
-            content.decode("utf-8")
-        except UnicodeDecodeError:
-            try:
-                content.decode("latin-1")
-                warnings.append(f"'{filename}' is not UTF-8 encoded; detected as latin-1")
-            except UnicodeDecodeError:
-                warnings.append(f"'{filename}' encoding could not be determined")
+            with open(stored_path, "wb") as f:
+                while True:
+                    chunk = await upload.read(_CHUNK)
+                    if not chunk:
+                        break
+                    total_bytes += len(chunk)
+                    if total_bytes > max_bytes:
+                        stored_path.unlink(missing_ok=True)
+                        raise HTTPException(
+                            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                            detail=f"File '{filename}' exceeds maximum size of {settings.MAX_FILE_SIZE_MB} MB",
+                        )
+                    f.write(chunk)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            stored_path.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to save '{filename}': {exc}",
+            ) from exc
 
-        # Validate XML for TMX files
+        # ── Encoding check (sample only) ──────────────────────────────────────
+        encoding = _check_encoding(stored_path)
+        if encoding != "utf-8":
+            warnings.append(f"'{filename}' is not UTF-8 encoded; detected as latin-1")
+
+        # ── XML validation for TMX files (streaming, no full DOM) ─────────────
         if ext == ".tmx":
-            if not _validate_xml(content):
+            if not _validate_xml_file(stored_path):
+                stored_path.unlink(missing_ok=True)
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"File '{filename}' is not well-formed XML",
                 )
 
-        file_id = str(uuid.uuid4())
-        stored_name = f"{file_id}_{filename}"
-        stored_path = str(upload_dir / stored_name)
-
-        with open(stored_path, "wb") as f:
-            f.write(content)
-
-        # Detect languages from file
+        # ── Language detection ────────────────────────────────────────────────
         detected_languages: list[str] = []
         try:
-            fpath_obj = Path(stored_path)
             if ext == ".tmx":
-                detected_languages = detect_tmx_languages(fpath_obj)
+                detected_languages = detect_tmx_languages(stored_path)
             elif ext in (".xls", ".xlsx"):
-                detected_languages = detect_xls_languages(fpath_obj)
+                detected_languages = detect_xls_languages(stored_path)
             elif ext == ".csv":
-                detected_languages = detect_csv_languages(fpath_obj)
+                detected_languages = detect_csv_languages(stored_path)
         except Exception:
             pass
 
+        # ── Persist record ────────────────────────────────────────────────────
         db_file = UploadedFile(
             id=file_id,
             user_id=current_user.id,
             job_id=None,
             original_filename=filename,
-            stored_path=stored_path,
+            stored_path=str(stored_path),
             created_at=datetime.now(timezone.utc),
         )
         db.add(db_file)
@@ -114,7 +139,7 @@ async def upload_files(
             {
                 "file_id": file_id,
                 "filename": filename,
-                "size": len(content),
+                "size": total_bytes,
                 "warnings": warnings,
                 "detected_languages": detected_languages,
             }

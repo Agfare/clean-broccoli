@@ -5,7 +5,9 @@ export const jobsApi = {
   upload: (files: File[]) => {
     const fd = new FormData()
     files.forEach((f) => fd.append('files', f))
-    return client.post<UploadedFile[]>('/files/upload', fd)
+    return client.post<UploadedFile[]>('/files/upload', fd, {
+      timeout: 300_000, // 5 minutes — allow time for large file uploads
+    })
   },
 
   create: (req: CreateJobRequest) => client.post<Job>('/jobs/', req),

@@ -9,6 +9,8 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
         ws: true,
+        proxyTimeout: 300_000,  // 5 minutes — needed for large file uploads
+        timeout: 300_000,
       },
     },
   },

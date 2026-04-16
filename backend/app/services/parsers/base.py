@@ -34,15 +34,15 @@ class ParseResult:
 
 
 def detect_encoding(path: Path) -> str:
-    """Try UTF-8 then latin-1 to detect file encoding."""
+    """Detect file encoding by sampling the first 8 KB (avoids loading large files)."""
     with open(path, "rb") as f:
-        raw = f.read()
+        sample = f.read(8192)
     try:
-        raw.decode("utf-8")
+        sample.decode("utf-8")
         return "utf-8"
     except UnicodeDecodeError:
         try:
-            raw.decode("latin-1")
+            sample.decode("latin-1")
             return "latin-1"
         except UnicodeDecodeError:
             return "utf-8"  # fallback
