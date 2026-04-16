@@ -70,8 +70,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = useCallback(
     async (email: string, password: string) => {
       await loginMutation.mutateAsync({ email, password })
+      // Await the refetch so `user` is populated before the caller navigates.
+      // Without this, ProtectedRoute sees user=null (stale cache) and redirects back to /login.
+      await queryClient.refetchQueries({ queryKey: ['auth', 'me'] })
     },
-    [loginMutation]
+    [loginMutation, queryClient]
   )
 
   const logout = useCallback(async () => {
@@ -81,8 +84,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const register = useCallback(
     async (username: string, email: string, password: string) => {
       await registerMutation.mutateAsync({ username, email, password })
+      await queryClient.refetchQueries({ queryKey: ['auth', 'me'] })
     },
-    [registerMutation]
+    [registerMutation, queryClient]
   )
 
   return (

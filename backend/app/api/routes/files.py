@@ -3,14 +3,14 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
+from starlette.datastructures import UploadFile
 
 from app.api.deps import get_current_user, get_db
 from app.core.config import settings
-from app.models.job import UploadedFile
+from app.models.job import UploadedFile as DBUploadedFile
 from app.models.user import User
 from app.services.parsers.csv import detect_csv_languages
 from app.services.parsers.tmx import detect_tmx_languages
@@ -19,7 +19,7 @@ from app.services.parsers.xls import detect_xls_languages
 router = APIRouter(prefix="/files", tags=["files"])
 
 ALLOWED_EXTENSIONS = {".tmx", ".xls", ".xlsx", ".csv"}
-_CHUNK = 1024 * 1024  # 1 MB read chunks
+_SPOOL_CHUNK = 1024 * 1024  # 1 MB read chunks when copying from spool to final path
 
 
 def _validate_xml_file(path: Path) -> bool:
@@ -28,7 +28,7 @@ def _validate_xml_file(path: Path) -> bool:
         from lxml import etree
 
         context = etree.iterparse(str(path), events=("start",), recover=False)
-        next(iter(context))  # parse just enough to reach the root element
+        next(iter(context))
         return True
     except Exception:
         return False
@@ -47,18 +47,41 @@ def _check_encoding(path: Path) -> str:
 
 @router.post("/upload")
 async def upload_files(
-    files: List[UploadFile] = File(...),
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     max_bytes = settings.MAX_FILE_SIZE_MB * 1024 * 1024
-    results = []
+
+    # Starlette 0.36+ defaults max_part_size to 1 MB, silently killing large uploads.
+    # We pass our own limit here so the form parser accepts files up to MAX_FILE_SIZE_MB.
+    try:
+        # max_part_size is set globally via MultiPartParser.max_file_size in main.py
+        # (Starlette 0.36+). We only pass the stable cross-version parameters here.
+        form = await request.form(max_fields=100, max_files=20)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Could not parse upload form: {exc}",
+        ) from exc
+
+    raw_files = form.getlist("files")
+    if not raw_files:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No files provided",
+        )
 
     upload_dir = Path(settings.STORAGE_PATH) / str(current_user.id) / "uploads"
     upload_dir.mkdir(parents=True, exist_ok=True)
 
-    for upload in files:
-        warnings = []
+    results = []
+
+    for upload in raw_files:
+        if not isinstance(upload, UploadFile):
+            continue
+
+        warnings: list[str] = []
         filename = upload.filename or "unknown"
         ext = Path(filename).suffix.lower()
 
@@ -68,16 +91,16 @@ async def upload_files(
                 detail=f"File '{filename}' has unsupported extension '{ext}'. Allowed: {', '.join(ALLOWED_EXTENSIONS)}",
             )
 
-        # ── Stream to disk in chunks, enforcing size limit ────────────────────
+        # ── Stream spool → final path, enforcing size limit ───────────────────
         file_id = str(uuid.uuid4())
         stored_name = f"{file_id}_{filename}"
-        stored_path = Path(upload_dir / stored_name)
+        stored_path = upload_dir / stored_name
 
         total_bytes = 0
         try:
             with open(stored_path, "wb") as f:
                 while True:
-                    chunk = await upload.read(_CHUNK)
+                    chunk = await upload.read(_SPOOL_CHUNK)
                     if not chunk:
                         break
                     total_bytes += len(chunk)
@@ -124,7 +147,7 @@ async def upload_files(
             pass
 
         # ── Persist record ────────────────────────────────────────────────────
-        db_file = UploadedFile(
+        db_file = DBUploadedFile(
             id=file_id,
             user_id=current_user.id,
             job_id=None,

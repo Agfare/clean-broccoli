@@ -8,11 +8,9 @@ const client = axios.create({
 client.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
-      if (!window.location.pathname.includes('/login')) {
-        window.location.href = '/login'
-      }
-    }
+    // Do NOT force a redirect here — React Router + ProtectedRoute handle navigation
+    // declaratively. A forced window.location reload fights with TanStack Query's
+    // cache, causing the login redirect loop (user=null in stale cache → redirect).
     return Promise.reject(error)
   }
 )

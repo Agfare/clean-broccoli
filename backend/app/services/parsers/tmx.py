@@ -74,12 +74,18 @@ KNOWN_LANG_CODES = {
 }
 
 
-def detect_tmx_languages(path: Path) -> list[str]:
-    """Return sorted list of unique primary language subtags found in the TMX file."""
+def detect_tmx_languages(path: Path, max_scan: int = 500) -> list[str]:
+    """Return sorted list of unique primary language subtags found in the TMX file.
+
+    Scans at most *max_scan* <tuv> elements so detection stays fast even on
+    very large files (100 MB+).  Language codes appear in every <tu>, so a
+    few hundred elements are always enough to find all of them.
+    """
     try:
         ns = _detect_tmx_namespace(path)
         tuv_tag = f"{{{ns}}}tuv" if ns else "tuv"
         langs: set[str] = set()
+        scanned = 0
         for _event, elem in etree.iterparse(str(path), events=("end",), tag=tuv_tag, recover=True):
             raw = elem.get(XML_LANG) or elem.get("lang") or ""
             if raw:
@@ -88,6 +94,9 @@ def detect_tmx_languages(path: Path) -> list[str]:
             elem.clear()
             if parent is not None:
                 parent.remove(elem)
+            scanned += 1
+            if scanned >= max_scan:
+                break
         return sorted(langs)
     except Exception:
         return []

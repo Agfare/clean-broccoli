@@ -10,6 +10,15 @@ from app.api.routes import auth, files, jobs, settings
 from app.core.config import settings as app_settings
 from app.core.database import init_db
 
+# Starlette 0.36+ added a hard 1 MB per-part limit to MultiPartParser.
+# Override it to our configured max before any request is handled.
+try:
+    from starlette.formparsers import MultiPartParser  # type: ignore[attr-defined]
+
+    MultiPartParser.max_file_size = app_settings.MAX_FILE_SIZE_MB * 1024 * 1024
+except Exception:
+    pass  # attribute may not exist in older Starlette versions — safe to ignore
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
