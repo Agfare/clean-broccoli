@@ -8,13 +8,15 @@ from app.services.mt.base import MTEngine
 class AnthropicEngine(MTEngine):
     def __init__(self, api_key: str) -> None:
         self._api_key = api_key
-        self._client = anthropic_lib.Anthropic(api_key=api_key)
+        self._client = anthropic_lib.Anthropic(api_key=api_key, timeout=30.0)
 
     def translate(self, text: str, source_lang: str, target_lang: str) -> str:
         """Translate text using Claude Haiku."""
+        # Truncate very long segments to avoid exceeding context limits
+        truncated = text[:2000] if len(text) > 2000 else text
         prompt = (
             f"You are a translator. Translate the following text from {source_lang} to {target_lang}. "
-            f"Return ONLY the translation, no explanation:\n\n{text}"
+            f"Return ONLY the translation, no explanation:\n\n{truncated}"
         )
         response = self._client.messages.create(
             model="claude-3-5-haiku-20241022",

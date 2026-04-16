@@ -217,6 +217,8 @@ def run_pipeline(self, job_id: str) -> None:
             if mt_engine is not None:
                 _set_progress(job_id, "mt", _lang_progress(lang_idx, 62), f"{_pfx}Scoring {len(all_segments)} segments with MT engine...")
                 mt_threshold = 0.6
+                consecutive_errors = 0
+                MT_ERROR_LIMIT = 3
 
                 for idx, seg in enumerate(all_segments):
                     if idx % 10 == 0:
@@ -226,6 +228,7 @@ def run_pipeline(self, job_id: str) -> None:
                     try:
                         mt_translation = mt_engine.translate(seg.source, source_lang, target_lang)
                         score = mt_engine.similarity_score(mt_translation, seg.target)
+                        consecutive_errors = 0  # reset on success
 
                         if score < mt_threshold:
                             issues_map[seg.id].append(
@@ -238,7 +241,14 @@ def run_pipeline(self, job_id: str) -> None:
                                 )
                             )
                     except Exception as e:
+                        consecutive_errors += 1
                         parse_warnings.append(f"MT scoring failed for segment {seg.id}: {e}")
+                        if consecutive_errors >= MT_ERROR_LIMIT:
+                            parse_warnings.append(
+                                f"MT scoring aborted after {MT_ERROR_LIMIT} consecutive errors — "
+                                f"check your API key and engine settings."
+                            )
+                            break
 
             # ------------------------------------------------------------------ #
             # 6. Apply options: filter/separate duplicates and untranslated
