@@ -64,7 +64,7 @@ def _detect_delimiter(sample: str) -> str:
     return max(counts, key=lambda k: counts[k])
 
 
-def parse_csv(path: Path, source_lang: str, target_lang: str) -> ParseResult:
+def parse_csv(path: Path, source_lang: str, target_lang: str, progress_callback=None) -> ParseResult:
     warnings: List[str] = []
 
     encoding = detect_encoding(path)
@@ -147,9 +147,10 @@ def parse_csv(path: Path, source_lang: str, target_lang: str) -> ParseResult:
                 target=target_text,
                 source_lang=source_lang,
                 target_lang=target_lang,
-                metadata={"row": row_num},
             )
         )
+        if progress_callback is not None and len(segments) % 5_000 == 0:
+            progress_callback(len(segments))
 
     return ParseResult(
         segments=segments,

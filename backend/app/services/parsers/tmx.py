@@ -102,7 +102,17 @@ def detect_tmx_languages(path: Path, max_scan: int = 500) -> list[str]:
         return []
 
 
-def parse_tmx(path: Path, source_lang: str, target_lang: str) -> ParseResult:
+def parse_tmx(
+    path: Path,
+    source_lang: str,
+    target_lang: str,
+    progress_callback=None,
+) -> ParseResult:
+    """Parse a TMX file and return segments.
+
+    *progress_callback*, if provided, is called as ``callback(n_parsed: int)``
+    every 5 000 segments so the caller can emit live progress updates.
+    """
     warnings: List[str] = []
     encoding = detect_encoding(path)
     encoding_ok = encoding == "utf-8"
@@ -155,9 +165,12 @@ def parse_tmx(path: Path, source_lang: str, target_lang: str) -> ParseResult:
                         target=target_text,
                         source_lang=source_lang,
                         target_lang=target_lang,
-                        metadata=metadata,
+                        # metadata deliberately omitted — TMX attributes (~500 B/segment)
+                        # are never read by any exporter and waste ~80 MB on large files.
                     )
                 )
+                if progress_callback is not None and len(segments) % 5_000 == 0:
+                    progress_callback(len(segments))
 
             # Free the processed <tu> element immediately to keep memory flat
             parent = elem.getparent()

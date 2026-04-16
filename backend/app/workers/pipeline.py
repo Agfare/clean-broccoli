@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import json
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -90,23 +91,41 @@ def run_pipeline(self, job_id: str) -> None:
             # ------------------------------------------------------------------ #
             # 3. Parse all files
             # ------------------------------------------------------------------ #
-            _set_progress(job_id, "parsing", _lang_progress(lang_idx, 10), f"{_pfx}Parsing {len(db_files)} file(s)...")
+            _set_progress(job_id, "parsing", _lang_progress(lang_idx, 5), f"{_pfx}Parsing {len(db_files)} file(s)...")
 
             all_segments: List[Segment] = []
             parse_warnings: List[str] = []
 
-            for db_file in db_files:
+            for file_idx, db_file in enumerate(db_files):
                 fpath = Path(db_file.stored_path)
                 ext = fpath.suffix.lower()
+                fname = db_file.original_filename
+
+                _set_progress(
+                    job_id, "parsing", _lang_progress(lang_idx, 6),
+                    f"{_pfx}Parsing {fname}...",
+                )
+
+                # Build a closure so the callback captures the right file name
+                def _make_parse_cb(label: str):
+                    def _cb(n: int) -> None:
+                        pct = _lang_progress(lang_idx, 7 + min(11, n // 5_000))
+                        _set_progress(
+                            job_id, "parsing", pct,
+                            f"{_pfx}Parsing {label} — {n:,} segments...",
+                        )
+                    return _cb
+
+                cb = _make_parse_cb(fname)
 
                 if ext == ".tmx":
-                    result = parse_tmx(fpath, source_lang, target_lang)
+                    result = parse_tmx(fpath, source_lang, target_lang, progress_callback=cb)
                 elif ext in (".xls", ".xlsx"):
-                    result = parse_xls(fpath, source_lang, target_lang)
+                    result = parse_xls(fpath, source_lang, target_lang, progress_callback=cb)
                 elif ext == ".csv":
-                    result = parse_csv(fpath, source_lang, target_lang)
+                    result = parse_csv(fpath, source_lang, target_lang, progress_callback=cb)
                 else:
-                    parse_warnings.append(f"Skipping unsupported file: {db_file.original_filename}")
+                    parse_warnings.append(f"Skipping unsupported file: {fname}")
                     continue
 
                 all_segments.extend(result.segments)
@@ -115,7 +134,11 @@ def run_pipeline(self, job_id: str) -> None:
             if not all_segments:
                 raise ValueError("No segments were parsed from the input files")
 
-            _set_progress(job_id, "parsing", _lang_progress(lang_idx, 20), f"{_pfx}Parsed {len(all_segments)} segments")
+            _set_progress(
+                job_id, "parsing", _lang_progress(lang_idx, 20),
+                f"{_pfx}Parsed {len(all_segments):,} segments",
+            )
+            gc.collect()  # free parse-phase objects before QA
 
             # ------------------------------------------------------------------ #
             # 4. QA checks
@@ -194,6 +217,8 @@ def run_pipeline(self, job_id: str) -> None:
                     script_issues = check_scripts(seg)
                     if script_issues:
                         issues_map[seg.id].extend(script_issues)
+
+            gc.collect()  # free QA intermediate structures before MT / export
 
             # ------------------------------------------------------------------ #
             # 5. MT scoring (if engine != "none")

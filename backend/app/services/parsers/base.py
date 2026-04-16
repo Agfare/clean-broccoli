@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
 
@@ -12,7 +12,7 @@ class Segment:
     target: str
     source_lang: str
     target_lang: str
-    metadata: dict
+    metadata: dict = field(default_factory=dict)  # not used by any exporter; kept for compat
 
 
 @dataclass

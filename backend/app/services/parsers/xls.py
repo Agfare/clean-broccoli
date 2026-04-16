@@ -72,7 +72,7 @@ def _detect_columns(headers: List[Optional[str]], source_lang: str, target_lang:
     return source_idx, target_idx
 
 
-def parse_xls(path: Path, source_lang: str, target_lang: str) -> ParseResult:
+def parse_xls(path: Path, source_lang: str, target_lang: str, progress_callback=None) -> ParseResult:
     warnings: List[str] = []
     encoding_ok = True  # XLS/XLSX are binary formats
 
@@ -148,9 +148,10 @@ def parse_xls(path: Path, source_lang: str, target_lang: str) -> ParseResult:
                 target=target_text,
                 source_lang=source_lang,
                 target_lang=target_lang,
-                metadata={"row": row_num},
             )
         )
+        if progress_callback is not None and len(segments) % 5_000 == 0:
+            progress_callback(len(segments))
 
     wb.close()
 
