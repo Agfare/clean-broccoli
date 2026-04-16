@@ -8,6 +8,46 @@ from typing import List, Optional
 from app.services.parsers.base import ParseResult, Segment, detect_encoding
 from app.services.parsers.xls import _detect_columns
 
+KNOWN_LANG_CODES = {
+    "en", "de", "fr", "es", "it", "pt", "nl", "ru", "pl", "cs", "sk", "hu",
+    "ro", "bg", "hr", "sr", "uk", "tr", "ar", "zh", "ja", "ko", "th", "vi",
+    "id", "ms", "hi", "fa", "he", "el", "sv", "da", "no", "fi", "et", "lv", "lt",
+}
+
+
+def detect_csv_languages(path: Path) -> list[str]:
+    """Return sorted list of language codes detected from CSV column headers."""
+    import csv as _csv
+    try:
+        with open(path, encoding="utf-8-sig", errors="replace") as f:
+            sample = f.read(4096)
+        # Detect delimiter
+        try:
+            dialect = _csv.Sniffer().sniff(sample, delimiters=",;\t")
+            delimiter = dialect.delimiter
+        except _csv.Error:
+            delimiter = ","
+        with open(path, encoding="utf-8-sig", errors="replace") as f:
+            reader = _csv.reader(f, delimiter=delimiter)
+            header = next(reader, None)
+        if not header:
+            return []
+        langs: set[str] = set()
+        for cell in header:
+            val = cell.strip().lower()
+            primary = val.split("-")[0].split("_")[0]
+            if primary in KNOWN_LANG_CODES:
+                langs.add(primary)
+                continue
+            for sep in ("_", "-", " ", "."):
+                for part in val.split(sep):
+                    if part in KNOWN_LANG_CODES:
+                        langs.add(part)
+                        break
+        return sorted(langs)
+    except Exception:
+        return []
+
 
 def _detect_delimiter(sample: str) -> str:
     """Auto-detect CSV delimiter by trying comma, semicolon, tab."""

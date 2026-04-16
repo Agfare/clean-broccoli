@@ -30,11 +30,13 @@ const defaultOptions: JobOptions = {
 export default function HomePage() {
   const [engine, setEngine] = useState<Engine>('none')
   const [sourceLang, setSourceLang] = useState('en')
-  const [targetLang, setTargetLang] = useState('de')
+  const [targetLangs, setTargetLangs] = useState<string[]>(['de'])
+  const [isMultilingual, setIsMultilingual] = useState(false)
   const [options, setOptions] = useState<JobOptions>(defaultOptions)
 
   const {
     uploadedFiles,
+    detectedLanguages,
     currentJob,
     progress,
     progressMessage,
@@ -55,7 +57,7 @@ export default function HomePage() {
       file_ids: uploadedFiles.map((f) => f.file_id),
       engine,
       source_lang: sourceLang,
-      target_lang: targetLang,
+      target_langs: targetLangs,
       options,
     })
   }
@@ -94,9 +96,12 @@ export default function HomePage() {
                 </h2>
                 <LanguagePairInput
                   sourceLang={sourceLang}
-                  targetLang={targetLang}
+                  targetLangs={targetLangs}
+                  isMultilingual={isMultilingual}
+                  detectedLanguages={detectedLanguages}
                   onSourceChange={setSourceLang}
-                  onTargetChange={setTargetLang}
+                  onTargetLangsChange={setTargetLangs}
+                  onMultilingualChange={setIsMultilingual}
                 />
               </div>
 

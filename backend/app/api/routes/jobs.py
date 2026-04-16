@@ -52,7 +52,7 @@ def create_job(
         options_json=body.options.model_dump_json(),
         engine=body.engine,
         source_lang=body.source_lang,
-        target_lang=body.target_lang,
+        target_lang=",".join(body.target_langs),  # comma-separated for multi-lang support
         created_at=datetime.now(timezone.utc),
     )
     db.add(job)

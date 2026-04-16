@@ -21,7 +21,7 @@ class DeepLEngine(MTEngine):
         self._api_key = api_key
         self._translator = deepl.Translator(api_key)
 
-    async def translate(self, text: str, source_lang: str, target_lang: str) -> str:
+    def translate(self, text: str, source_lang: str, target_lang: str) -> str:
         """Translate text using DeepL."""
         src = _map_lang_code(source_lang, is_target=False)
         tgt = _map_lang_code(target_lang, is_target=True)

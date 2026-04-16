@@ -12,7 +12,7 @@ class GoogleEngine(MTEngine):
             client_options={"api_key": api_key}
         )
 
-    async def translate(self, text: str, source_lang: str, target_lang: str) -> str:
+    def translate(self, text: str, source_lang: str, target_lang: str) -> str:
         """Translate text using Google Cloud Translation."""
         result = self._client.translate(
             text,

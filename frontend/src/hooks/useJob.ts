@@ -10,6 +10,7 @@ import {
 
 interface JobState {
   uploadedFiles: UploadedFile[]
+  detectedLanguages: string[]
   currentJob: Job | null
   progress: number
   progressMessage: string
@@ -22,6 +23,7 @@ interface JobState {
 
 const initialState: JobState = {
   uploadedFiles: [],
+  detectedLanguages: [],
   currentJob: null,
   progress: 0,
   progressMessage: '',
@@ -47,9 +49,11 @@ export function useJob() {
     setState((prev) => ({ ...prev, isUploading: true, error: null }))
     try {
       const res = await jobsApi.upload(files)
+      const newLangs = res.data.flatMap((f) => f.detected_languages ?? [])
       setState((prev) => ({
         ...prev,
         uploadedFiles: [...prev.uploadedFiles, ...res.data],
+        detectedLanguages: [...new Set([...prev.detectedLanguages, ...newLangs])],
         isUploading: false,
       }))
     } catch (err: unknown) {
@@ -64,10 +68,11 @@ export function useJob() {
   }, [])
 
   const removeUploadedFile = useCallback((fileId: string) => {
-    setState((prev) => ({
-      ...prev,
-      uploadedFiles: prev.uploadedFiles.filter((f) => f.file_id !== fileId),
-    }))
+    setState((prev) => {
+      const remaining = prev.uploadedFiles.filter((f) => f.file_id !== fileId)
+      const langs = [...new Set(remaining.flatMap((f) => f.detected_languages ?? []))]
+      return { ...prev, uploadedFiles: remaining, detectedLanguages: langs }
+    })
   }, [])
 
   const startJob = useCallback(

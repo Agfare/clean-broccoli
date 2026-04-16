@@ -73,6 +73,29 @@ def _serialize_seg(seg_elem) -> str:
     return "".join(parts)
 
 
+KNOWN_LANG_CODES = {
+    "en", "de", "fr", "es", "it", "pt", "nl", "ru", "pl", "cs", "sk", "hu",
+    "ro", "bg", "hr", "sr", "uk", "tr", "ar", "zh", "ja", "ko", "th", "vi",
+    "id", "ms", "hi", "fa", "he", "el", "sv", "da", "no", "fi", "et", "lv", "lt",
+}
+
+
+def detect_tmx_languages(path: Path) -> list[str]:
+    """Return sorted list of unique primary language subtags found in the TMX file."""
+    try:
+        tree = etree.parse(str(path))
+        root = tree.getroot()
+        langs: set[str] = set()
+        for elem in root.iter():
+            if etree.QName(elem.tag).localname == "tuv":
+                raw = elem.get(XML_LANG) or elem.get("lang") or ""
+                if raw:
+                    langs.add(raw.lower().split("-")[0].split("_")[0])
+        return sorted(langs)
+    except Exception:
+        return []
+
+
 def parse_tmx(path: Path, source_lang: str, target_lang: str) -> ParseResult:
     warnings: List[str] = []
     encoding = detect_encoding(path)

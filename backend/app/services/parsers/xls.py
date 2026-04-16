@@ -7,6 +7,43 @@ import openpyxl
 
 from app.services.parsers.base import ParseResult, Segment
 
+KNOWN_LANG_CODES = {
+    "en", "de", "fr", "es", "it", "pt", "nl", "ru", "pl", "cs", "sk", "hu",
+    "ro", "bg", "hr", "sr", "uk", "tr", "ar", "zh", "ja", "ko", "th", "vi",
+    "id", "ms", "hi", "fa", "he", "el", "sv", "da", "no", "fi", "et", "lv", "lt",
+}
+
+
+def detect_xls_languages(path: Path) -> list[str]:
+    """Return sorted list of language codes detected from column headers."""
+    try:
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        ws = wb.active
+        if ws is None:
+            return []
+        first_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), None)
+        if not first_row:
+            return []
+        langs: set[str] = set()
+        for cell in first_row:
+            if cell is None:
+                continue
+            val = str(cell).strip().lower()
+            # Direct match: header IS a lang code
+            primary = val.split("-")[0].split("_")[0]
+            if primary in KNOWN_LANG_CODES:
+                langs.add(primary)
+                continue
+            # Header contains a lang code as a word token (e.g. "source_en", "text de")
+            for sep in ("_", "-", " ", "."):
+                for part in val.split(sep):
+                    if part in KNOWN_LANG_CODES:
+                        langs.add(part)
+                        break
+        return sorted(langs)
+    except Exception:
+        return []
+
 
 def _detect_columns(headers: List[Optional[str]], source_lang: str, target_lang: str) -> Tuple[int, int]:
     """

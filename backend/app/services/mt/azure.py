@@ -12,7 +12,7 @@ class AzureEngine(MTEngine):
         self._api_key = api_key
         self._region = region
 
-    async def translate(self, text: str, source_lang: str, target_lang: str) -> str:
+    def translate(self, text: str, source_lang: str, target_lang: str) -> str:
         """Translate text using Azure Cognitive Services Translator."""
         src = source_lang.split("-")[0].lower()
         tgt = target_lang.split("-")[0].lower()

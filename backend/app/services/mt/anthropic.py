@@ -10,14 +10,14 @@ class AnthropicEngine(MTEngine):
         self._api_key = api_key
         self._client = anthropic_lib.Anthropic(api_key=api_key)
 
-    async def translate(self, text: str, source_lang: str, target_lang: str) -> str:
+    def translate(self, text: str, source_lang: str, target_lang: str) -> str:
         """Translate text using Claude Haiku."""
         prompt = (
             f"You are a translator. Translate the following text from {source_lang} to {target_lang}. "
             f"Return ONLY the translation, no explanation:\n\n{text}"
         )
         response = self._client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model="claude-3-5-haiku-20241022",
             max_tokens=500,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -35,7 +35,7 @@ class AnthropicEngine(MTEngine):
         )
         try:
             response = self._client.messages.create(
-                model="claude-haiku-4-5-20251001",
+                model="claude-3-5-haiku-20241022",
                 max_tokens=10,
                 messages=[{"role": "user", "content": prompt}],
             )
@@ -65,7 +65,7 @@ class AnthropicEngine(MTEngine):
         )
         try:
             response = self._client.messages.create(
-                model="claude-haiku-4-5-20251001",
+                model="claude-3-5-haiku-20241022",
                 max_tokens=10,
                 messages=[{"role": "user", "content": prompt}],
             )

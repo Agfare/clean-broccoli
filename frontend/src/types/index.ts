@@ -10,6 +10,7 @@ export interface UploadedFile {
   filename: string
   size: number
   warnings: string[]
+  detected_languages: string[]
 }
 
 export type Engine = 'none' | 'anthropic' | 'google' | 'azure' | 'deepl'
@@ -37,7 +38,7 @@ export interface CreateJobRequest {
   file_ids: string[]
   engine: Engine
   source_lang: string
-  target_lang: string
+  target_langs: string[]   // one or more target language codes
   options: JobOptions
 }
 

@@ -28,7 +28,7 @@ class CreateJobRequest(BaseModel):
     file_ids: List[str]
     engine: str
     source_lang: str
-    target_lang: str
+    target_langs: List[str]  # one or more target language codes
     options: JobOptions
 
 

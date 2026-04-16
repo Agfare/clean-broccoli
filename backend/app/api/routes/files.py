@@ -12,6 +12,9 @@ from app.api.deps import get_current_user, get_db
 from app.core.config import settings
 from app.models.job import UploadedFile
 from app.models.user import User
+from app.services.parsers.csv import detect_csv_languages
+from app.services.parsers.tmx import detect_tmx_languages
+from app.services.parsers.xls import detect_xls_languages
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -83,6 +86,19 @@ async def upload_files(
         with open(stored_path, "wb") as f:
             f.write(content)
 
+        # Detect languages from file
+        detected_languages: list[str] = []
+        try:
+            fpath_obj = Path(stored_path)
+            if ext == ".tmx":
+                detected_languages = detect_tmx_languages(fpath_obj)
+            elif ext in (".xls", ".xlsx"):
+                detected_languages = detect_xls_languages(fpath_obj)
+            elif ext == ".csv":
+                detected_languages = detect_csv_languages(fpath_obj)
+        except Exception:
+            pass
+
         db_file = UploadedFile(
             id=file_id,
             user_id=current_user.id,
@@ -100,6 +116,7 @@ async def upload_files(
                 "filename": filename,
                 "size": len(content),
                 "warnings": warnings,
+                "detected_languages": detected_languages,
             }
         )
 
