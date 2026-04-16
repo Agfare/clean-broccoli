@@ -206,7 +206,7 @@ The left panel on the main page contains the upload zone.
 - Click the dashed zone or drag files onto it
 - Multiple files can be selected or dropped at once
 - Accepted formats: `.tmx`, `.xls`, `.xlsx`, `.csv`
-- Maximum file size: 50 MB per file (configurable in `.env`)
+- Maximum file size: 150 MB per file (configurable in `.env`)
 
 On upload, each file is immediately validated:
 - TMX files are checked for well-formed XML

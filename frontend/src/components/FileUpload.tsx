@@ -1,6 +1,9 @@
 import { useRef, useState, DragEvent, ChangeEvent } from 'react'
 import { UploadedFile } from '../types'
 
+const MAX_FILE_SIZE_MB = 150
+const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+
 interface Props {
   onFilesChange: (files: File[]) => void
   uploadedFiles: UploadedFile[]
@@ -21,7 +24,15 @@ export default function FileUpload({
   isUploading,
 }: Props) {
   const [isDragOver, setIsDragOver] = useState(false)
+  const [sizeErrors, setSizeErrors] = useState<string[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
+
+  function processFiles(raw: File[]) {
+    const oversized = raw.filter((f) => f.size > MAX_FILE_SIZE_BYTES)
+    const valid = raw.filter((f) => f.size <= MAX_FILE_SIZE_BYTES)
+    setSizeErrors(oversized.map((f) => `"${f.name}" exceeds the ${MAX_FILE_SIZE_MB} MB limit`))
+    if (valid.length > 0) onFilesChange(valid)
+  }
 
   const handleDragOver = (e: DragEvent) => {
     e.preventDefault()
@@ -37,9 +48,7 @@ export default function FileUpload({
     e.preventDefault()
     setIsDragOver(false)
     const files = Array.from(e.dataTransfer.files)
-    if (files.length > 0) {
-      onFilesChange(files)
-    }
+    if (files.length > 0) processFiles(files)
   }
 
   const handleClick = () => {
@@ -48,9 +57,7 @@ export default function FileUpload({
 
   const handleInputChange = (e: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? [])
-    if (files.length > 0) {
-      onFilesChange(files)
-    }
+    if (files.length > 0) processFiles(files)
     // reset input so same file can be re-selected
     e.target.value = ''
   }
@@ -105,6 +112,27 @@ export default function FileUpload({
           </div>
         )}
       </div>
+
+      {/* Oversized-file errors */}
+      {sizeErrors.length > 0 && (
+        <ul className="mt-2 space-y-1">
+          {sizeErrors.map((msg, i) => (
+            <li
+              key={i}
+              className="flex items-start gap-1.5 text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5"
+            >
+              <svg className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path
+                  fillRule="evenodd"
+                  d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z"
+                  clipRule="evenodd"
+                />
+              </svg>
+              {msg}
+            </li>
+          ))}
+        </ul>
+      )}
 
       {/* Uploaded files list */}
       {uploadedFiles.length > 0 && (
