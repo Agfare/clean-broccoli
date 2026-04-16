@@ -565,3 +565,6 @@ The error message is shown in the progress bar. Common causes: no segments parse
 
 **Frontend shows a blank page after login**
 Clear browser cookies for `localhost` and refresh. If the issue persists, check the browser console for network errors — the backend may not be running on port 8000.
+
+<img width="1226" height="1014" alt="image" src="https://github.com/user-attachments/assets/38321c59-c544-4d02-aad2-36216eb35155" />
+
