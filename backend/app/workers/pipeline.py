@@ -45,6 +45,38 @@ def _crash_log(tag: str, job_id: str, detail: str = "") -> None:
 # ---------------------------------------------------------------------------
 # Cooperative cancellation
 # ---------------------------------------------------------------------------
+# Output path builder
+# ---------------------------------------------------------------------------
+
+def _build_output_paths(
+    output_dir: Path,
+    source_lang: str,
+    target_lang: str,
+    output_prefix: str,
+) -> Dict[str, Path]:
+    """Return the eight canonical output file paths for one language pair.
+
+    *output_prefix* is prepended followed by an underscore when non-empty,
+    so ``prefix="v2"`` yields ``v2_clean_en_de.tmx``, while an empty prefix
+    yields ``clean_en_de.tmx`` (original behaviour).
+
+    Extracting this into a named function lets tests import and exercise the
+    real naming logic rather than an independent copy of it.
+    """
+    p = (output_prefix + "_") if output_prefix else ""
+    return {
+        "clean_tmx": output_dir / f"{p}clean_{source_lang}_{target_lang}.tmx",
+        "clean_xls": output_dir / f"{p}clean_{source_lang}_{target_lang}.xlsx",
+        "qa_xls":    output_dir / f"{p}qa_{source_lang}_{target_lang}.xlsx",
+        "report":    output_dir / f"{p}qa_{source_lang}_{target_lang}.html",
+        "dup_tmx":   output_dir / f"{p}duplicates_{source_lang}_{target_lang}.tmx",
+        "dup_xls":   output_dir / f"{p}duplicates_{source_lang}_{target_lang}.xlsx",
+        "ut_tmx":    output_dir / f"{p}untranslated_{source_lang}_{target_lang}.tmx",
+        "ut_xls":    output_dir / f"{p}untranslated_{source_lang}_{target_lang}.xlsx",
+    }
+
+
+# ---------------------------------------------------------------------------
 
 class JobCancelledError(Exception):
     """Raised cooperatively when a running job's DB status is set to 'cancelled'.
@@ -412,16 +444,18 @@ def run_pipeline(self, job_id: str) -> None:  # noqa: C901
             output_dir = Path(settings.STORAGE_PATH) / str(user_id) / job_id / "output"
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            # Output paths
-            _fname_pfx = (job.output_prefix + "_") if job.output_prefix else ""
-            clean_tmx_path = output_dir / f"{_fname_pfx}clean_{source_lang}_{target_lang}.tmx"
-            clean_xls_path = output_dir / f"{_fname_pfx}clean_{source_lang}_{target_lang}.xlsx"
-            qa_xls_path    = output_dir / f"{_fname_pfx}qa_{source_lang}_{target_lang}.xlsx"
-            report_path    = output_dir / f"{_fname_pfx}qa_{source_lang}_{target_lang}.html"
-            dup_tmx_path   = output_dir / f"{_fname_pfx}duplicates_{source_lang}_{target_lang}.tmx"
-            dup_xls_path   = output_dir / f"{_fname_pfx}duplicates_{source_lang}_{target_lang}.xlsx"
-            ut_tmx_path    = output_dir / f"{_fname_pfx}untranslated_{source_lang}_{target_lang}.tmx"
-            ut_xls_path    = output_dir / f"{_fname_pfx}untranslated_{source_lang}_{target_lang}.xlsx"
+            # Output paths — built via the named helper so tests can import it
+            _paths = _build_output_paths(
+                output_dir, source_lang, target_lang, job.output_prefix or ""
+            )
+            clean_tmx_path = _paths["clean_tmx"]
+            clean_xls_path = _paths["clean_xls"]
+            qa_xls_path    = _paths["qa_xls"]
+            report_path    = _paths["report"]
+            dup_tmx_path   = _paths["dup_tmx"]
+            dup_xls_path   = _paths["dup_xls"]
+            ut_tmx_path    = _paths["ut_tmx"]
+            ut_xls_path    = _paths["ut_xls"]
 
             # Decide which separate-file writers to open
             has_dups = bool(scan_data["dup_exact_keys"])
