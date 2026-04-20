@@ -33,6 +33,7 @@ export default function HomePage() {
   const [targetLangs, setTargetLangs] = useState<string[]>(['de'])
   const [isMultilingual, setIsMultilingual] = useState(false)
   const [options, setOptions] = useState<JobOptions>(defaultOptions)
+  const [outputPrefix, setOutputPrefix] = useState('')
 
   const {
     uploadedFiles,
@@ -62,6 +63,7 @@ export default function HomePage() {
       source_lang: sourceLang,
       target_langs: targetLangs,
       options,
+      output_prefix: outputPrefix || undefined,
     })
   }
 
@@ -108,6 +110,32 @@ export default function HomePage() {
                   onTargetLangsChange={setTargetLangs}
                   onMultilingualChange={setIsMultilingual}
                 />
+              </div>
+
+              {/* Output file prefix */}
+              <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6">
+                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
+                  Output File Prefix
+                </h2>
+                <label className="block text-sm text-gray-600 mb-1">
+                  Prefix <span className="text-gray-400">(optional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={outputPrefix}
+                  onChange={(e) => setOutputPrefix(e.target.value)}
+                  placeholder="e.g. project_v2"
+                  maxLength={50}
+                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
+                />
+                <p className="mt-1.5 text-xs text-gray-400">
+                  Letters, digits, hyphens and underscores only.
+                  {outputPrefix && (
+                    <span className="ml-1 text-indigo-500">
+                      Files will be named <span className="font-mono">{outputPrefix}_clean_…</span>
+                    </span>
+                  )}
+                </p>
               </div>
 
               {/* Engine selector */}

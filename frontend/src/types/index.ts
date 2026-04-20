@@ -40,6 +40,7 @@ export interface CreateJobRequest {
   source_lang: string
   target_langs: string[]   // one or more target language codes
   options: JobOptions
+  output_prefix?: string   // optional user-supplied filename prefix
 }
 
 export interface Job {

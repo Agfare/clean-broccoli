@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class JobOptions(BaseModel):
@@ -30,6 +31,18 @@ class CreateJobRequest(BaseModel):
     source_lang: str
     target_langs: List[str]  # one or more target language codes
     options: JobOptions
+    output_prefix: str = ""
+
+    @field_validator("output_prefix")
+    @classmethod
+    def _validate_prefix(cls, v: str) -> str:
+        v = v.strip()
+        if v and not re.fullmatch(r"[A-Za-z0-9_-]{1,50}", v):
+            raise ValueError(
+                "output_prefix may only contain letters, digits, hyphens, and "
+                "underscores, and must be 1–50 characters."
+            )
+        return v
 
 
 class JobResponse(BaseModel):

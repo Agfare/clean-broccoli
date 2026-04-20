@@ -12,15 +12,21 @@ type DetailedType = 'tmx' | 'clean_xls' | 'qa_xls' | 'html' | 'duplicates' | 'un
 
 function getDetailedType(filename: string): DetailedType {
   const name = filename.toLowerCase()
+  // Match the type keyword just before the _SRCLANG_TGTLANG.EXT suffix,
+  // preceded by either the start of the string or an underscore (prefix boundary).
+  // This works for both plain names (clean_en_de.tmx) and prefixed ones (proj_clean_en_de.tmx).
+  const m = name.match(/(?:^|_)(clean|qa|duplicates|untranslated)_[a-z]{2,3}_[a-z]{2,3}\.[a-z]+$/)
+  const keyword = m?.[1]
+
   if (name.endsWith('.tmx')) {
-    if (name.startsWith('duplicates_')) return 'duplicates'
-    if (name.startsWith('untranslated_')) return 'untranslated'
+    if (keyword === 'duplicates')   return 'duplicates'
+    if (keyword === 'untranslated') return 'untranslated'
     return 'tmx'
   }
   if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
-    if (name.startsWith('qa_')) return 'qa_xls'
-    if (name.startsWith('duplicates_')) return 'duplicates'
-    if (name.startsWith('untranslated_')) return 'untranslated'
+    if (keyword === 'qa')           return 'qa_xls'
+    if (keyword === 'duplicates')   return 'duplicates'
+    if (keyword === 'untranslated') return 'untranslated'
     return 'clean_xls'
   }
   if (name.endsWith('.html') || name.endsWith('.htm')) return 'html'

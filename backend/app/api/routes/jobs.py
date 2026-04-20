@@ -97,6 +97,7 @@ def create_job(
         engine=body.engine,
         source_lang=body.source_lang,
         target_lang=",".join(body.target_langs),
+        output_prefix=body.output_prefix,
         created_at=datetime.now(timezone.utc),
     )
     db.add(job)

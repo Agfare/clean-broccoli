@@ -46,6 +46,7 @@ def _apply_migrations() -> None:
     tables = inspector.get_table_names()
 
     _add_column_if_missing(inspector, text, tables, "jobs", "task_id", "TEXT")
+    _add_column_if_missing(inspector, text, tables, "jobs", "output_prefix", "TEXT")
 
 
 def _add_column_if_missing(inspector, text, tables, table: str, column: str, col_type: str) -> None:

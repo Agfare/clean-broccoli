@@ -413,14 +413,15 @@ def run_pipeline(self, job_id: str) -> None:  # noqa: C901
             output_dir.mkdir(parents=True, exist_ok=True)
 
             # Output paths
-            clean_tmx_path = output_dir / f"clean_{source_lang}_{target_lang}.tmx"
-            clean_xls_path = output_dir / f"clean_{source_lang}_{target_lang}.xlsx"
-            qa_xls_path    = output_dir / f"qa_{source_lang}_{target_lang}.xlsx"
-            report_path    = output_dir / f"qa_{source_lang}_{target_lang}.html"
-            dup_tmx_path   = output_dir / f"duplicates_{source_lang}_{target_lang}.tmx"
-            dup_xls_path   = output_dir / f"duplicates_{source_lang}_{target_lang}.xlsx"
-            ut_tmx_path    = output_dir / f"untranslated_{source_lang}_{target_lang}.tmx"
-            ut_xls_path    = output_dir / f"untranslated_{source_lang}_{target_lang}.xlsx"
+            _fname_pfx = (job.output_prefix + "_") if job.output_prefix else ""
+            clean_tmx_path = output_dir / f"{_fname_pfx}clean_{source_lang}_{target_lang}.tmx"
+            clean_xls_path = output_dir / f"{_fname_pfx}clean_{source_lang}_{target_lang}.xlsx"
+            qa_xls_path    = output_dir / f"{_fname_pfx}qa_{source_lang}_{target_lang}.xlsx"
+            report_path    = output_dir / f"{_fname_pfx}qa_{source_lang}_{target_lang}.html"
+            dup_tmx_path   = output_dir / f"{_fname_pfx}duplicates_{source_lang}_{target_lang}.tmx"
+            dup_xls_path   = output_dir / f"{_fname_pfx}duplicates_{source_lang}_{target_lang}.xlsx"
+            ut_tmx_path    = output_dir / f"{_fname_pfx}untranslated_{source_lang}_{target_lang}.tmx"
+            ut_xls_path    = output_dir / f"{_fname_pfx}untranslated_{source_lang}_{target_lang}.xlsx"
 
             # Decide which separate-file writers to open
             has_dups = bool(scan_data["dup_exact_keys"])

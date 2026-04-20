@@ -21,6 +21,7 @@ class Job(Base):
     target_lang = Column(String, nullable=False)
     error_message = Column(String, nullable=True)
     task_id = Column(String, nullable=True)   # Celery AsyncResult.id — used for revocation
+    output_prefix = Column(String, nullable=True, default="")  # user-supplied filename prefix
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     completed_at = Column(DateTime(timezone=True), nullable=True)
 
