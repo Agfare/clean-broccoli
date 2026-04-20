@@ -77,3 +77,18 @@ export interface ProgressEvent {
   progress: number
   message: string
 }
+
+export interface PreviewSegment {
+  id: string
+  source: string
+  target: string
+}
+
+export interface PreviewResponse {
+  file_id: string
+  filename: string
+  source_lang: string
+  target_lang: string
+  segments: PreviewSegment[]
+  warnings: string[]
+}

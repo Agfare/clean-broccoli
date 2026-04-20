@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tmx version="1.4">
+  <header creationtool="tmclean-test" srclang="en" adminlang="en-US" datatype="PlainText" segtype="sentence" o-tmf="test"/>
+  <body>
+    <tu tuid="1">
+      <tuv xml:lang="en"><seg>Hello world</seg></tuv>
+      <tuv xml:lang="de"><seg>Hallo Welt</seg></tuv>
+    </tu>
+    <tu tuid="2">
+      <tuv xml:lang="en"><seg>Good morning</seg></tuv>
+      <tuv xml:lang="de"><seg>Guten Morgen</seg></tuv>
+    </tu>
+    <tu tuid="3">
+      <tuv xml:lang="en"><seg>Thank you very much</seg></tuv>
+      <tuv xml:lang="de"><seg>Vielen Dank</seg></tuv>
+    </tu>
+    <tu tuid="4">
+      <tuv xml:lang="en"><seg>Please click the button</seg></tuv>
+      <tuv xml:lang="de"><seg>Bitte klicken Sie den Knopf</seg></tuv>
+    </tu>
+    <tu tuid="5">
+      <tuv xml:lang="en"><seg>Save your changes</seg></tuv>
+      <tuv xml:lang="de"><seg>Speichern Sie Ihre Änderungen</seg></tuv>
+    </tu>
+  </body>
+</tmx>

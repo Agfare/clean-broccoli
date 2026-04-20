@@ -21,6 +21,10 @@ const config: Record<JobStatus, { label: string; className: string }> = {
     label: 'Failed',
     className: 'bg-red-100 text-red-700',
   },
+  cancelled: {
+    label: 'Cancelled',
+    className: 'bg-gray-100 text-gray-500',
+  },
 }
 
 export default function StatusBadge({ status }: Props) {

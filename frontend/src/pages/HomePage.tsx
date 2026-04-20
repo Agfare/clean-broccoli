@@ -6,8 +6,9 @@ import LanguagePairInput from '../components/LanguagePairInput'
 import OptionsPanel from '../components/OptionsPanel'
 import ProgressBar from '../components/ProgressBar'
 import ResultsPanel from '../components/ResultsPanel'
+import PreviewModal from '../components/PreviewModal'
 import { useJob } from '../hooks/useJob'
-import { Engine, JobOptions } from '../types'
+import { Engine, JobOptions, UploadedFile } from '../types'
 
 const defaultOptions: JobOptions = {
   remove_duplicates: false,
@@ -34,6 +35,7 @@ export default function HomePage() {
   const [isMultilingual, setIsMultilingual] = useState(false)
   const [options, setOptions] = useState<JobOptions>(defaultOptions)
   const [outputPrefix, setOutputPrefix] = useState('')
+  const [previewFile, setPreviewFile] = useState<UploadedFile | null>(null)
 
   const {
     uploadedFiles,
@@ -74,6 +76,7 @@ export default function HomePage() {
   const isCancelled = currentJob?.status === 'cancelled'
 
   return (
+    <>
     <div className="min-h-screen bg-gray-50">
       <Navbar />
 
@@ -91,6 +94,9 @@ export default function HomePage() {
                   onFilesChange={uploadFiles}
                   uploadedFiles={uploadedFiles}
                   onRemoveFile={removeUploadedFile}
+                  onPreview={(fileId) =>
+                    setPreviewFile(uploadedFiles.find((f) => f.file_id === fileId) ?? null)
+                  }
                   isUploading={isUploading}
                   uploadProgress={uploadProgress}
                 />
@@ -322,5 +328,16 @@ export default function HomePage() {
         </div>
       </div>
     </div>
+
+    {previewFile && (
+      <PreviewModal
+        fileId={previewFile.file_id}
+        filename={previewFile.filename}
+        sourceLang={detectedLanguages[0]}
+        targetLang={detectedLanguages[1]}
+        onClose={() => setPreviewFile(null)}
+      />
+    )}
+    </>
   )
 }

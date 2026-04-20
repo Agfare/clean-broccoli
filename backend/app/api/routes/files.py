@@ -3,8 +3,9 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 from starlette.datastructures import UploadFile
 
@@ -12,9 +13,10 @@ from app.api.deps import get_current_user, get_db
 from app.core.config import settings
 from app.models.job import UploadedFile as DBUploadedFile
 from app.models.user import User
-from app.services.parsers.csv import detect_csv_languages
-from app.services.parsers.tmx import detect_tmx_languages
-from app.services.parsers.xls import detect_xls_languages
+from app.schemas.file import PreviewResponse, PreviewSegment
+from app.services.parsers.csv import detect_csv_languages, iter_csv
+from app.services.parsers.tmx import detect_tmx_languages, iter_tmx
+from app.services.parsers.xls import detect_xls_languages, iter_xls
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -169,3 +171,109 @@ async def upload_files(
         )
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Preview helpers
+# ---------------------------------------------------------------------------
+
+_MAX_PREVIEW_LIMIT = 100
+
+
+def _detect_langs(path: Path, ext: str) -> list[str]:
+    """Return detected language codes for *path* based on its file extension."""
+    try:
+        if ext == ".tmx":
+            return detect_tmx_languages(path)
+        if ext in (".xls", ".xlsx"):
+            return detect_xls_languages(path)
+        if ext == ".csv":
+            return detect_csv_languages(path)
+    except Exception:
+        pass
+    return []
+
+
+def _preview_segments(
+    path: Path,
+    ext: str,
+    source_lang: str,
+    target_lang: str,
+    limit: int,
+    warnings: list[str],
+) -> List[PreviewSegment]:
+    """Stream up to *limit* segments from *path* and return as PreviewSegments."""
+    try:
+        if ext == ".tmx":
+            iterator = iter_tmx(path, source_lang, target_lang, warnings=warnings)
+        elif ext in (".xls", ".xlsx"):
+            iterator = iter_xls(path, source_lang, target_lang, warnings=warnings)
+        elif ext == ".csv":
+            iterator = iter_csv(path, source_lang, target_lang, warnings=warnings)
+        else:
+            warnings.append(f"Unsupported file type: {ext}")
+            return []
+    except Exception as exc:
+        warnings.append(f"Could not open file for preview: {exc}")
+        return []
+
+    results: List[PreviewSegment] = []
+    for seg in iterator:
+        results.append(PreviewSegment(id=str(seg.id), source=seg.source, target=seg.target))
+        if len(results) >= limit:
+            break
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Preview endpoint
+# ---------------------------------------------------------------------------
+
+@router.get("/{file_id}/preview", response_model=PreviewResponse)
+def preview_file(
+    file_id: str,
+    limit: int = Query(default=20, ge=1, le=_MAX_PREVIEW_LIMIT),
+    source_lang: Optional[str] = Query(default=None),
+    target_lang: Optional[str] = Query(default=None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return the first *limit* segments of an uploaded file for preview.
+
+    *source_lang* and *target_lang* are optional.  When omitted, the endpoint
+    auto-detects the language pair from the file itself using the same language
+    detection logic used at upload time.
+    """
+    db_file = db.query(DBUploadedFile).filter(
+        DBUploadedFile.id == file_id,
+        DBUploadedFile.user_id == current_user.id,
+    ).first()
+    if not db_file:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+
+    path = Path(db_file.stored_path)
+    if not path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File no longer exists on disk",
+        )
+
+    ext = Path(db_file.original_filename).suffix.lower()
+
+    # Auto-detect languages when caller did not supply them
+    if not source_lang or not target_lang:
+        langs = _detect_langs(path, ext)
+        source_lang = source_lang or (langs[0] if len(langs) > 0 else "en")
+        target_lang  = target_lang  or (langs[1] if len(langs) > 1 else source_lang)
+
+    warnings: list[str] = []
+    segments = _preview_segments(path, ext, source_lang, target_lang, limit, warnings)
+
+    return PreviewResponse(
+        file_id=file_id,
+        filename=db_file.original_filename,
+        source_lang=source_lang,
+        target_lang=target_lang,
+        segments=segments,
+        warnings=warnings,
+    )
