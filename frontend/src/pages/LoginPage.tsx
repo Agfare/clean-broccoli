@@ -64,7 +64,7 @@ export default function LoginPage() {
       <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-8 w-full max-w-md">
         {/* Logo / Brand */}
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold text-indigo-700 tracking-tight">tmclean</h1>
+          <h1 className="text-2xl font-bold text-indigo-700 tracking-tight">TM Tools</h1>
           <p className="text-sm text-gray-500 mt-1">Translation Memory Cleaning Service</p>
         </div>
 

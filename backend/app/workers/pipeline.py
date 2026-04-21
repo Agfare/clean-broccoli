@@ -678,7 +678,48 @@ def run_pipeline(self, job_id: str) -> None:  # noqa: C901
             gc.collect()
 
         # ------------------------------------------------------------------ #
-        # 8. Save output file records to DB
+        # 8. Merge per-language clean TMXs into one multi-language file
+        # ------------------------------------------------------------------ #
+        if options.merge_to_tmx and options.outputs_tmx:
+            _set_progress(job_id, "merging", 96, "Merging language pairs into single TMX…")
+            _crash_log("MERGE_START", job_id, f"n_langs={n_langs}")
+
+            # Collect the per-language clean TMX paths that were written
+            clean_tmx_paths = [
+                _build_output_paths(
+                    output_dir, source_lang, tl, job.output_prefix or ""
+                )["clean_tmx"]
+                for tl in target_langs
+            ]
+            existing_clean_tmxs = [p for p in clean_tmx_paths if p.exists()]
+
+            if existing_clean_tmxs:
+                pfx = (job.output_prefix + "_") if job.output_prefix else ""
+                if len(target_langs) == 1:
+                    merged_name = f"{pfx}merged_{source_lang}_{target_langs[0]}.tmx"
+                else:
+                    merged_name = f"{pfx}merged_{source_lang}.tmx"
+                merged_path = output_dir / merged_name
+
+                from app.services.exporters.tmx import merge_bilingual_tmxs
+                merge_bilingual_tmxs(source_lang, existing_clean_tmxs, merged_path)
+                _crash_log("MERGE_DONE", job_id,
+                           f"output={merged_name} src_files={len(existing_clean_tmxs)}")
+
+                # Replace per-language clean TMXs with the single merged file
+                output_files = [f for f in output_files if f not in existing_clean_tmxs]
+                if merged_path.exists():
+                    output_files.insert(0, merged_path)
+
+                # Remove the intermediate bilingual clean TMX files from disk
+                for p_tmx in existing_clean_tmxs:
+                    try:
+                        p_tmx.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+
+        # ------------------------------------------------------------------ #
+        # 9. Save output file records to DB
         # ------------------------------------------------------------------ #
         for out_path in output_files:
             db_out = UploadedFile(

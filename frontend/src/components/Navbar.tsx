@@ -15,7 +15,7 @@ export default function Navbar() {
       <div className="flex items-center justify-between w-full">
         {/* Logo */}
         <Link to="/" className="text-xl font-bold text-indigo-700 tracking-tight hover:text-indigo-800 transition">
-          tmclean
+          TM Tools
         </Link>
 
         {/* Right side */}

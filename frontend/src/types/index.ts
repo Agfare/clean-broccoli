@@ -32,6 +32,7 @@ export interface JobOptions {
   outputs_clean_xls: boolean
   outputs_qa_xls: boolean
   outputs_html_report: boolean
+  merge_to_tmx: boolean
 }
 
 export interface CreateJobRequest {

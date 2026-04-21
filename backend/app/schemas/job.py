@@ -23,6 +23,7 @@ class JobOptions(BaseModel):
     outputs_clean_xls: bool = True
     outputs_qa_xls: bool = True
     outputs_html_report: bool = True
+    merge_to_tmx: bool = False
 
 
 class CreateJobRequest(BaseModel):

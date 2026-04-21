@@ -26,6 +26,7 @@ const defaultOptions: JobOptions = {
   outputs_clean_xls: true,
   outputs_qa_xls: true,
   outputs_html_report: true,
+  merge_to_tmx: false,
 }
 
 export default function HomePage() {
@@ -84,7 +85,7 @@ export default function HomePage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="flex flex-col lg:flex-row gap-8">
             {/* Left panel: controls */}
-            <div className="lg:w-96 xl:w-[420px] flex-shrink-0 space-y-6">
+            <div className="lg:w-80 xl:w-96 flex-shrink-0 space-y-6">
               {/* File Upload */}
               <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6">
                 <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
@@ -100,6 +101,30 @@ export default function HomePage() {
                   isUploading={isUploading}
                   uploadProgress={uploadProgress}
                 />
+
+                {/* Merge checkbox */}
+                <div className="mt-4 pt-4 border-t border-gray-100">
+                  <label className="flex items-start gap-2.5 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={options.merge_to_tmx}
+                      onChange={(e) =>
+                        setOptions((prev) => ({ ...prev, merge_to_tmx: e.target.checked }))
+                      }
+                      className="mt-0.5 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                    />
+                    <div>
+                      <span className="text-sm font-medium text-gray-700 group-hover:text-gray-900">
+                        Merge into single TMX
+                      </span>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        Combine all input files into one deduplicated multi-language TMX.
+                        Applies the same QA checks, tag and variable handling, and
+                        duplicate/untranslated filtering.
+                      </p>
+                    </div>
+                  </label>
+                </div>
               </div>
 
               {/* Language pair */}
@@ -142,14 +167,6 @@ export default function HomePage() {
                     </span>
                   )}
                 </p>
-              </div>
-
-              {/* Engine selector */}
-              <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6">
-                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
-                  MT Engine
-                </h2>
-                <EngineSelector value={engine} onChange={setEngine} />
               </div>
 
               {/* Run / Cancel buttons */}
@@ -322,6 +339,16 @@ export default function HomePage() {
                   Processing Options
                 </h2>
                 <OptionsPanel options={options} onChange={setOptions} />
+              </div>
+            </div>
+
+            {/* Right panel: AI engine */}
+            <div className="lg:w-64 xl:w-72 flex-shrink-0 space-y-6">
+              <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6">
+                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
+                  MT Engine
+                </h2>
+                <EngineSelector value={engine} onChange={setEngine} />
               </div>
             </div>
           </div>
