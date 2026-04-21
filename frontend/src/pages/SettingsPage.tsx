@@ -3,6 +3,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Navbar from '../components/Navbar'
 import { settingsApi } from '../api/settings'
 import { ApiKey, Engine } from '../types'
+import { INPUT_CLASS } from '../constants'
+import { extractApiError } from '../utils/errors'
+import { formatDate } from '../utils/format'
 
 const ENGINE_LABELS: Record<Engine, string> = {
   none: 'None',
@@ -42,19 +45,7 @@ export default function SettingsPage() {
       setAddError(null)
     },
     onError: (err: unknown) => {
-      if (
-        err &&
-        typeof err === 'object' &&
-        'response' in err &&
-        err.response &&
-        typeof err.response === 'object' &&
-        'data' in err.response
-      ) {
-        const data = (err.response as { data?: { detail?: string } }).data
-        setAddError(data?.detail ?? 'Failed to add key')
-      } else {
-        setAddError('Failed to add key')
-      }
+      setAddError(extractApiError(err, 'Failed to add key'))
     },
   })
 
@@ -77,21 +68,6 @@ export default function SettingsPage() {
   }
 
   const existingEngines = new Set(apiKeys.map((k) => k.engine))
-
-  const inputClass =
-    'border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition'
-
-  const formatDate = (iso: string) => {
-    try {
-      return new Date(iso).toLocaleDateString(undefined, {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-      })
-    } catch {
-      return iso
-    }
-  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -117,7 +93,7 @@ export default function SettingsPage() {
               <select
                 value={newEngine}
                 onChange={(e) => setNewEngine(e.target.value as Engine)}
-                className={`${inputClass} sm:w-48 flex-shrink-0`}
+                className={`${INPUT_CLASS} sm:w-48 flex-shrink-0`}
               >
                 {ENGINE_OPTIONS.map((eng) => (
                   <option key={eng} value={eng}>
@@ -129,7 +105,7 @@ export default function SettingsPage() {
 
               <input
                 type="text"
-                className={`${inputClass} flex-1`}
+                className={`${INPUT_CLASS} flex-1`}
                 value={newKey}
                 onChange={(e) => setNewKey(e.target.value)}
                 placeholder="Paste your API key here..."

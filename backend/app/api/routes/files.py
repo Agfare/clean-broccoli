@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from starlette.datastructures import UploadFile
 
 from app.api.deps import get_current_user, get_db
+from app.constants import PREVIEW_LIMIT_DEFAULT, PREVIEW_LIMIT_MAX
 from app.core.config import settings
 from app.models.job import UploadedFile as DBUploadedFile
 from app.models.user import User
@@ -177,9 +178,6 @@ async def upload_files(
 # Preview helpers
 # ---------------------------------------------------------------------------
 
-_MAX_PREVIEW_LIMIT = 100
-
-
 def _detect_langs(path: Path, ext: str) -> list[str]:
     """Return detected language codes for *path* based on its file extension."""
     try:
@@ -232,7 +230,7 @@ def _preview_segments(
 @router.get("/{file_id}/preview", response_model=PreviewResponse)
 def preview_file(
     file_id: str,
-    limit: int = Query(default=20, ge=1, le=_MAX_PREVIEW_LIMIT),
+    limit: int = Query(default=PREVIEW_LIMIT_DEFAULT, ge=1, le=PREVIEW_LIMIT_MAX),
     source_lang: Optional[str] = Query(default=None),
     target_lang: Optional[str] = Query(default=None),
     current_user: User = Depends(get_current_user),

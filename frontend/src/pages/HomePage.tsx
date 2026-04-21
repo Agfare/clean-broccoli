@@ -8,33 +8,15 @@ import ProgressBar from '../components/ProgressBar'
 import ResultsPanel from '../components/ResultsPanel'
 import PreviewModal from '../components/PreviewModal'
 import { useJob } from '../hooks/useJob'
-import { Engine, JobOptions, UploadedFile } from '../types'
-
-const defaultOptions: JobOptions = {
-  remove_duplicates: false,
-  move_duplicates_to_separate_file: false,
-  remove_untranslated: false,
-  move_untranslated_to_separate_file: false,
-  remove_tags: false,
-  keep_tags_intact: true,
-  remove_variables: false,
-  keep_variables_intact: true,
-  check_numbers: true,
-  check_scripts: true,
-  check_untranslated: true,
-  outputs_tmx: true,
-  outputs_clean_xls: true,
-  outputs_qa_xls: true,
-  outputs_html_report: true,
-  merge_to_tmx: false,
-}
+import { Engine, UploadedFile } from '../types'
+import { DEFAULT_JOB_OPTIONS } from '../constants'
 
 export default function HomePage() {
   const [engine, setEngine] = useState<Engine>('none')
   const [sourceLang, setSourceLang] = useState('en')
   const [targetLangs, setTargetLangs] = useState<string[]>(['de'])
   const [isMultilingual, setIsMultilingual] = useState(false)
-  const [options, setOptions] = useState<JobOptions>(defaultOptions)
+  const [options, setOptions] = useState(DEFAULT_JOB_OPTIONS)
   const [outputPrefix, setOutputPrefix] = useState('')
   const [previewFile, setPreviewFile] = useState<UploadedFile | null>(null)
 

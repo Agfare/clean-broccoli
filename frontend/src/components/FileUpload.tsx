@@ -1,8 +1,7 @@
 import { useRef, useState, DragEvent, ChangeEvent } from 'react'
 import { UploadedFile } from '../types'
-
-const MAX_FILE_SIZE_MB = 150
-const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+import { MAX_FILE_SIZE_MB, MAX_FILE_SIZE_BYTES } from '../constants'
+import { formatBytes } from '../utils/format'
 
 interface Props {
   onFilesChange: (files: File[]) => void
@@ -11,12 +10,6 @@ interface Props {
   onPreview: (fileId: string) => void
   isUploading: boolean
   uploadProgress?: number  // 0-100; shown when isUploading is true
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 export default function FileUpload({

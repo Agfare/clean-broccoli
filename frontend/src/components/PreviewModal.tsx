@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { filesApi } from '../api/files'
 import { PreviewResponse } from '../types'
+import { extractApiError } from '../utils/errors'
 
 interface Props {
   fileId: string
@@ -26,7 +27,7 @@ export default function PreviewModal({ fileId, filename, sourceLang, targetLang,
       .then((res) => { if (!cancelled) { setData(res.data); setLoading(false) } })
       .catch((err) => {
         if (!cancelled) {
-          setError(err?.response?.data?.detail ?? err?.message ?? 'Failed to load preview')
+          setError(extractApiError(err, 'Failed to load preview'))
           setLoading(false)
         }
       })

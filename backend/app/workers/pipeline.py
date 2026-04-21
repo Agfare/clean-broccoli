@@ -15,6 +15,7 @@ log = logging.getLogger(__name__)
 
 import redis as redis_lib
 
+from app.constants import MT_ERROR_LIMIT, MT_QUALITY_THRESHOLD, PROGRESS_KEY_TTL
 from app.core.config import settings
 from app.workers.celery_app import celery_app
 
@@ -114,7 +115,7 @@ def _is_cancelled(job_id: str) -> bool:
 def _set_progress(job_id: str, step: str, pct: int, msg: str) -> None:
     key = f"job_progress:{job_id}"
     value = json.dumps({"step": step, "progress": pct, "message": msg})
-    redis_client.set(key, value, ex=3600)
+    redis_client.set(key, value, ex=PROGRESS_KEY_TTL)
 
 
 def _lang_progress(lang_idx: int, n_langs: int, local_pct: int) -> int:
@@ -478,7 +479,6 @@ def run_pipeline(self, job_id: str) -> None:  # noqa: C901
 
             _crash_log("PASS2_START", job_id, f"lang={target_lang} total={total_segments}")
             mt_consecutive_errors = 0
-            MT_ERROR_LIMIT = 3
             mt_aborted = False
             seg_count = 0
 
@@ -599,11 +599,11 @@ def run_pipeline(self, job_id: str) -> None:  # noqa: C901
                             )
                             score = mt_engine.similarity_score(mt_translation, seg.target)
                             mt_consecutive_errors = 0
-                            if score < 0.6:
+                            if score < MT_QUALITY_THRESHOLD:
                                 issues.append(QAIssue(
                                     segment_id=seg.id, check="mt_quality",
                                     severity="warning",
-                                    message=f"MT quality score {score:.2f} is below threshold 0.60",
+                                    message=f"MT quality score {score:.2f} is below threshold {MT_QUALITY_THRESHOLD:.2f}",
                                     detail=f"MT translation: {mt_translation[:100]}",
                                 ))
                         except Exception as e:

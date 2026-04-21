@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
 
+from app.constants import PREVIEW_EXCERPT_LEN
 from app.services.parsers.base import QAIssue, Segment
 
 
@@ -63,8 +64,8 @@ class HtmlStatsAccumulator:
         if issues:
             self.flagged_data.append({
                 "id": seg.id,
-                "src": seg.source[:100] + ("..." if len(seg.source) > 100 else ""),
-                "tgt": seg.target[:100] + ("..." if len(seg.target) > 100 else ""),
+                "src": seg.source[:PREVIEW_EXCERPT_LEN] + ("..." if len(seg.source) > PREVIEW_EXCERPT_LEN else ""),
+                "tgt": seg.target[:PREVIEW_EXCERPT_LEN] + ("..." if len(seg.target) > PREVIEW_EXCERPT_LEN else ""),
                 "issues": list(issues),
             })
 

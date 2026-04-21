@@ -1,6 +1,8 @@
 import { useState, FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { INPUT_CLASS } from '../constants'
+import { extractApiError } from '../utils/errors'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -38,26 +40,11 @@ export default function LoginPage() {
       }
       navigate('/')
     } catch (err: unknown) {
-      if (
-        err &&
-        typeof err === 'object' &&
-        'response' in err &&
-        err.response &&
-        typeof err.response === 'object' &&
-        'data' in err.response
-      ) {
-        const data = (err.response as { data?: { detail?: string } }).data
-        setError(data?.detail ?? 'An error occurred')
-      } else {
-        setError('An error occurred. Please try again.')
-      }
+      setError(extractApiError(err, 'An error occurred. Please try again.'))
     } finally {
       setIsSubmitting(false)
     }
   }
-
-  const inputClass =
-    'w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition'
 
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
@@ -88,7 +75,7 @@ export default function LoginPage() {
               </label>
               <input
                 type="text"
-                className={inputClass}
+                className={`w-full ${INPUT_CLASS}`}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="johndoe"
@@ -104,7 +91,7 @@ export default function LoginPage() {
             </label>
             <input
               type="email"
-              className={inputClass}
+              className={`w-full ${INPUT_CLASS}`}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
@@ -119,7 +106,7 @@ export default function LoginPage() {
             </label>
             <input
               type="password"
-              className={inputClass}
+              className={`w-full ${INPUT_CLASS}`}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
@@ -135,7 +122,7 @@ export default function LoginPage() {
               </label>
               <input
                 type="password"
-                className={inputClass}
+                className={`w-full ${INPUT_CLASS}`}
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 placeholder="••••••••"

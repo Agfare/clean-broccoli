@@ -1,4 +1,5 @@
 import { useState, KeyboardEvent } from 'react'
+import { INPUT_CLASS } from '../constants'
 
 interface Props {
   sourceLang: string
@@ -9,9 +10,6 @@ interface Props {
   onTargetLangsChange: (langs: string[]) => void
   onMultilingualChange: (val: boolean) => void
 }
-
-const inputClass =
-  'border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition'
 
 export default function LanguagePairInput({
   sourceLang,
@@ -75,7 +73,7 @@ export default function LanguagePairInput({
         </label>
         <input
           type="text"
-          className={`${inputClass} w-full`}
+          className={`${INPUT_CLASS} w-full`}
           value={sourceLang}
           onChange={(e) => onSourceChange(e.target.value)}
           placeholder="en"
@@ -91,7 +89,7 @@ export default function LanguagePairInput({
           </label>
           <input
             type="text"
-            className={`${inputClass} w-full`}
+            className={`${INPUT_CLASS} w-full`}
             value={targetLangs[0] ?? ''}
             onChange={(e) => onTargetLangsChange([e.target.value])}
             placeholder="de"
