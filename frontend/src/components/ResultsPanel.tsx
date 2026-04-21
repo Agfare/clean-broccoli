@@ -1,4 +1,9 @@
 import { useState } from 'react'
+import {
+  DocumentTextIcon,
+  ArrowTopRightOnSquareIcon,
+  ArrowDownTrayIcon,
+} from '@heroicons/react/24/outline'
 import { JobResults, Job } from '../types'
 
 interface Props {
@@ -66,15 +71,7 @@ function isHtmlFile(filename: string): boolean {
 
 // ── Filter pill ───────────────────────────────────────────────────────────────
 
-function Pill({
-  label,
-  active,
-  onClick,
-}: {
-  label: string
-  active: boolean
-  onClick: () => void
-}) {
+function Pill({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
@@ -98,19 +95,7 @@ export default function ResultsPanel({ results, job }: Props) {
   if (!results || results.outputs.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-center">
-        <svg
-          className="w-12 h-12 text-gray-300 mb-3"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={1.5}
-            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-          />
-        </svg>
+        <DocumentTextIcon className="w-12 h-12 text-gray-300 mb-3" aria-hidden />
         <p className="text-sm text-gray-400">No output files available</p>
       </div>
     )
@@ -160,15 +145,10 @@ export default function ResultsPanel({ results, job }: Props) {
       {/* Filters */}
       {(showLangFilter || showTypeFilter) && (
         <div className="space-y-2 mb-4">
-          {/* Language filter */}
           {showLangFilter && (
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-xs text-gray-400 w-16 flex-shrink-0">Language</span>
-              <Pill
-                label="All"
-                active={activeLang === null}
-                onClick={() => setActiveLang(null)}
-              />
+              <Pill label="All" active={activeLang === null} onClick={() => setActiveLang(null)} />
               {langPairs.map((pair) => (
                 <Pill
                   key={pair}
@@ -179,16 +159,10 @@ export default function ResultsPanel({ results, job }: Props) {
               ))}
             </div>
           )}
-
-          {/* File type filter */}
           {showTypeFilter && (
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="text-xs text-gray-400 w-16 flex-shrink-0">Type</span>
-              <Pill
-                label="All"
-                active={activeType === null}
-                onClick={() => setActiveType(null)}
-              />
+              <Pill label="All" active={activeType === null} onClick={() => setActiveType(null)} />
               {fileTypes.map((type) => (
                 <Pill
                   key={type}
@@ -218,6 +192,9 @@ export default function ResultsPanel({ results, job }: Props) {
           {visible.map((output) => {
             const detailedType = getDetailedType(output.filename)
             const html = isHtmlFile(output.filename)
+            const langPair = extractLangPair(output.filename)
+            const actionClass =
+              'ml-4 flex-shrink-0 text-sm font-medium text-indigo-600 hover:text-indigo-700 border border-indigo-200 hover:border-indigo-400 px-3 py-1.5 rounded-md transition flex items-center gap-1.5'
             return (
               <li
                 key={output.filename}
@@ -228,17 +205,11 @@ export default function ResultsPanel({ results, job }: Props) {
                     {TYPE_ICONS[detailedType]}
                   </span>
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-gray-800 truncate">
-                      {output.filename}
-                    </p>
+                    <p className="text-sm font-medium text-gray-800 truncate">{output.filename}</p>
                     <p className="text-xs text-gray-400">
                       {TYPE_LABELS[detailedType]}
-                      {extractLangPair(output.filename) && (
-                        <span className="ml-1.5 text-gray-300">·</span>
-                      )}
-                      {extractLangPair(output.filename) && (
-                        <span className="ml-1.5">{extractLangPair(output.filename)}</span>
-                      )}
+                      {langPair && <span className="ml-1.5 text-gray-300">·</span>}
+                      {langPair && <span className="ml-1.5">{langPair}</span>}
                     </p>
                   </div>
                 </div>
@@ -248,22 +219,18 @@ export default function ResultsPanel({ results, job }: Props) {
                     href={output.download_url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="ml-4 flex-shrink-0 text-sm font-medium text-indigo-600 hover:text-indigo-700 border border-indigo-200 hover:border-indigo-400 px-3 py-1.5 rounded-md transition flex items-center gap-1.5"
+                    className={actionClass}
                   >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                    </svg>
+                    <ArrowTopRightOnSquareIcon className="w-3.5 h-3.5" aria-hidden />
                     Open
                   </a>
                 ) : (
                   <a
                     href={output.download_url}
                     download={output.filename}
-                    className="ml-4 flex-shrink-0 text-sm font-medium text-indigo-600 hover:text-indigo-700 border border-indigo-200 hover:border-indigo-400 px-3 py-1.5 rounded-md transition flex items-center gap-1.5"
+                    className={actionClass}
                   >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                    </svg>
+                    <ArrowDownTrayIcon className="w-3.5 h-3.5" aria-hidden />
                     Download
                   </a>
                 )}

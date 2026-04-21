@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider } from './contexts/AuthContext'
 import { useAuth } from './hooks/useAuth'
+import Spinner from './components/shared/Spinner'
 import LoginPage from './pages/LoginPage'
 import HomePage from './pages/HomePage'
 import SettingsPage from './pages/SettingsPage'
@@ -12,7 +13,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+          <Spinner size="xl" color="indigo" />
           <p className="text-sm text-gray-500">Loading...</p>
         </div>
       </div>

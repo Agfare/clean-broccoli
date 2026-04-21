@@ -1,3 +1,4 @@
+import { CheckIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import { JobStatus } from '../types'
 
 interface Props {
@@ -11,22 +12,28 @@ export default function ProgressBar({ progress, step, message, status }: Props) 
   const clampedProgress = Math.min(100, Math.max(0, progress))
 
   const barColor =
-    status === 'failed'
-      ? 'bg-red-500'
-      : status === 'complete'
-      ? 'bg-green-500'
-      : status === 'cancelled'
-      ? 'bg-gray-400'
-      : 'bg-indigo-600'
+    status === 'failed'    ? 'bg-red-500'   :
+    status === 'complete'  ? 'bg-green-500' :
+    status === 'cancelled' ? 'bg-gray-400'  :
+                             'bg-indigo-600'
 
   const trackColor =
-    status === 'failed'
-      ? 'bg-red-100'
-      : status === 'complete'
-      ? 'bg-green-100'
-      : status === 'cancelled'
-      ? 'bg-gray-100'
-      : 'bg-indigo-100'
+    status === 'failed'    ? 'bg-red-100'   :
+    status === 'complete'  ? 'bg-green-100' :
+    status === 'cancelled' ? 'bg-gray-100'  :
+                             'bg-indigo-100'
+
+  const textColor =
+    status === 'failed'    ? 'text-red-600'   :
+    status === 'complete'  ? 'text-green-600' :
+    status === 'cancelled' ? 'text-gray-500'  :
+                             'text-indigo-700'
+
+  const messageColor =
+    status === 'failed'    ? 'text-red-600'   :
+    status === 'complete'  ? 'text-green-700' :
+    status === 'cancelled' ? 'text-gray-500'  :
+                             'text-gray-600'
 
   return (
     <div className="space-y-2">
@@ -39,46 +46,16 @@ export default function ProgressBar({ progress, step, message, status }: Props) 
         )}
         <div className="ml-auto flex items-center gap-2">
           {status === 'complete' && (
-            <svg
-              className="w-4 h-4 text-green-600"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2.5}
-                d="M5 13l4 4L19 7"
-              />
-            </svg>
+            <CheckIcon className="w-4 h-4 text-green-600" strokeWidth={2.5} aria-hidden />
           )}
           {(status === 'failed' || status === 'cancelled') && (
-            <svg
+            <XMarkIcon
               className={`w-4 h-4 ${status === 'cancelled' ? 'text-gray-400' : 'text-red-600'}`}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2.5}
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
+              strokeWidth={2.5}
+              aria-hidden
+            />
           )}
-          <span
-            className={`text-sm font-medium ${
-              status === 'failed'
-                ? 'text-red-600'
-                : status === 'complete'
-                ? 'text-green-600'
-                : status === 'cancelled'
-                ? 'text-gray-500'
-                : 'text-indigo-700'
-            }`}
-          >
+          <span className={`text-sm font-medium ${textColor}`}>
             {clampedProgress}%
           </span>
         </div>
@@ -95,21 +72,7 @@ export default function ProgressBar({ progress, step, message, status }: Props) 
       </div>
 
       {/* Message */}
-      {message && (
-        <p
-          className={`text-sm ${
-            status === 'failed'
-              ? 'text-red-600'
-              : status === 'complete'
-              ? 'text-green-700'
-              : status === 'cancelled'
-              ? 'text-gray-500'
-              : 'text-gray-600'
-          }`}
-        >
-          {message}
-        </p>
-      )}
+      {message && <p className={`text-sm ${messageColor}`}>{message}</p>}
     </div>
   )
 }

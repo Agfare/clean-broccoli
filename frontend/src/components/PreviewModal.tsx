@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
+import { XMarkIcon } from '@heroicons/react/24/outline'
 import { filesApi } from '../api/files'
 import { PreviewResponse } from '../types'
+import Alert from './shared/Alert'
+import Spinner from './shared/Spinner'
 import { extractApiError } from '../utils/errors'
 
 interface Props {
@@ -81,9 +84,7 @@ export default function PreviewModal({ fileId, filename, sourceLang, targetLang,
             className="ml-4 flex-shrink-0 text-gray-400 hover:text-gray-600 transition"
             aria-label="Close preview"
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
+            <XMarkIcon className="w-5 h-5" aria-hidden />
           </button>
         </div>
 
@@ -91,16 +92,12 @@ export default function PreviewModal({ fileId, filename, sourceLang, targetLang,
         <div className="flex-1 overflow-y-auto">
           {loading && (
             <div className="flex items-center justify-center py-16 gap-3 text-gray-400">
-              <span className="w-5 h-5 border-2 border-gray-300 border-t-indigo-500 rounded-full animate-spin" />
+              <Spinner size="md" color="gray" />
               <span className="text-sm">Loading preview…</span>
             </div>
           )}
 
-          {error && (
-            <div className="m-6 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
-              {error}
-            </div>
-          )}
+          {error && <Alert variant="error" className="m-6">{error}</Alert>}
 
           {data && !loading && (
             <>

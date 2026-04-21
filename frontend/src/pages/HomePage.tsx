@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { PlayCircleIcon, XMarkIcon, TableCellsIcon } from '@heroicons/react/24/outline'
 import Navbar from '../components/Navbar'
 import FileUpload from '../components/FileUpload'
 import EngineSelector from '../components/EngineSelector'
@@ -7,6 +8,11 @@ import OptionsPanel from '../components/OptionsPanel'
 import ProgressBar from '../components/ProgressBar'
 import ResultsPanel from '../components/ResultsPanel'
 import PreviewModal from '../components/PreviewModal'
+import Alert from '../components/shared/Alert'
+import Button from '../components/shared/Button'
+import Card from '../components/shared/Card'
+import SectionHeader from '../components/shared/SectionHeader'
+import Spinner from '../components/shared/Spinner'
 import { useJob } from '../hooks/useJob'
 import { Engine, UploadedFile } from '../types'
 import { DEFAULT_JOB_OPTIONS } from '../constants'
@@ -53,7 +59,6 @@ export default function HomePage() {
   }
 
   const canRun = uploadedFiles.length > 0 && !isRunning
-
   const showProgress = isRunning || (currentJob !== null && !results)
   const showResults = results !== null
   const isCancelled = currentJob?.status === 'cancelled'
@@ -66,13 +71,13 @@ export default function HomePage() {
       <div className="pt-14">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="flex flex-col lg:flex-row gap-8">
-            {/* Left panel: controls */}
+
+            {/* ── Left panel: controls ── */}
             <div className="lg:w-80 xl:w-96 flex-shrink-0 space-y-6">
+
               {/* File Upload */}
-              <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6">
-                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
-                  Input Files
-                </h2>
+              <Card>
+                <SectionHeader>Input Files</SectionHeader>
                 <FileUpload
                   onFilesChange={uploadFiles}
                   uploadedFiles={uploadedFiles}
@@ -107,13 +112,11 @@ export default function HomePage() {
                     </div>
                   </label>
                 </div>
-              </div>
+              </Card>
 
               {/* Language pair */}
-              <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6">
-                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
-                  Language Pair
-                </h2>
+              <Card>
+                <SectionHeader>Language Pair</SectionHeader>
                 <LanguagePairInput
                   sourceLang={sourceLang}
                   targetLangs={targetLangs}
@@ -123,13 +126,11 @@ export default function HomePage() {
                   onTargetLangsChange={setTargetLangs}
                   onMultilingualChange={setIsMultilingual}
                 />
-              </div>
+              </Card>
 
               {/* Output file prefix */}
-              <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6">
-                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
-                  Output File Prefix
-                </h2>
+              <Card>
+                <SectionHeader>Output File Prefix</SectionHeader>
                 <label className="block text-sm text-gray-600 mb-1">
                   Prefix <span className="text-gray-400">(optional)</span>
                 </label>
@@ -149,62 +150,37 @@ export default function HomePage() {
                     </span>
                   )}
                 </p>
-              </div>
+              </Card>
 
               {/* Run / Cancel buttons */}
               <div className="flex gap-2">
-                <button
+                <Button
                   onClick={handleRun}
                   disabled={!canRun}
-                  className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed text-white px-4 py-3 rounded-md font-medium text-sm transition flex items-center justify-center gap-2"
+                  variant="primary"
+                  size="lg"
+                  className="flex-1"
                 >
                   {isRunning ? (
-                    <>
-                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Running...
-                    </>
+                    <><Spinner size="sm" color="white" /> Running...</>
                   ) : (
-                    <>
-                      <svg
-                        className="w-4 h-4"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
-                        />
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                        />
-                      </svg>
-                      Run Cleaning Job
-                    </>
+                    <><PlayCircleIcon className="w-4 h-4" aria-hidden /> Run Cleaning Job</>
                   )}
-                </button>
+                </Button>
 
                 {isRunning && (
-                  <button
+                  <Button
                     onClick={cancelJob}
                     disabled={isCancelling}
+                    variant="danger"
+                    size="lg"
                     title="Cancel this job"
-                    className="px-3 py-3 rounded-md font-medium text-sm border border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center gap-1.5"
                   >
-                    {isCancelling ? (
-                      <span className="w-4 h-4 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
-                    ) : (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    )}
+                    {isCancelling
+                      ? <Spinner size="sm" color="red" />
+                      : <XMarkIcon className="w-4 h-4" aria-hidden />}
                     {isCancelling ? 'Cancelling…' : 'Cancel'}
-                  </button>
+                  </Button>
                 )}
               </div>
 
@@ -215,45 +191,25 @@ export default function HomePage() {
               )}
             </div>
 
-            {/* Right panel: progress + results */}
+            {/* ── Centre panel: progress + results ── */}
             <div className="flex-1 min-w-0">
+
               {/* Error banner */}
               {error && (
-                <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
-                  <svg
-                    className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                    />
-                  </svg>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-red-700">Job failed</p>
-                    <p className="text-sm text-red-600 mt-0.5">{error}</p>
-                  </div>
-                  <button
-                    onClick={clearJob}
-                    className="text-red-400 hover:text-red-600 transition"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
+                <Alert
+                  variant="error"
+                  title="Job failed"
+                  onDismiss={clearJob}
+                  className="mb-6"
+                >
+                  {error}
+                </Alert>
               )}
 
               {/* Progress */}
               {showProgress && (
-                <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6 mb-6">
-                  <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
-                    Progress
-                  </h2>
+                <Card className="mb-6">
+                  <SectionHeader>Progress</SectionHeader>
                   <ProgressBar
                     progress={progress}
                     step={progressStep}
@@ -270,14 +226,13 @@ export default function HomePage() {
                       </button>
                     </div>
                   )}
-                </div>
+                </Card>
               )}
 
               {/* Results */}
               {showResults && (
-                <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6">
+                <Card className="mb-6">
                   <ResultsPanel results={results} job={currentJob} />
-
                   <div className="mt-4 pt-4 border-t border-gray-100">
                     <button
                       onClick={clearJob}
@@ -286,53 +241,36 @@ export default function HomePage() {
                       ← Start a new job
                     </button>
                   </div>
-                </div>
+                </Card>
               )}
 
               {/* Empty state */}
               {!showProgress && !showResults && !error && (
-                <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-12 text-center mb-6">
-                  <svg
-                    className="w-16 h-16 text-gray-200 mx-auto mb-4"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={1}
-                      d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"
-                    />
-                  </svg>
-                  <h3 className="text-base font-medium text-gray-400 mb-1">
-                    Ready to clean
-                  </h3>
+                <Card className="p-12 text-center mb-6">
+                  <TableCellsIcon className="w-16 h-16 text-gray-200 mx-auto mb-4" strokeWidth={1} aria-hidden />
+                  <h3 className="text-base font-medium text-gray-400 mb-1">Ready to clean</h3>
                   <p className="text-sm text-gray-400">
                     Upload your TM files, configure options, and run a cleaning job.
                     Results will appear here.
                   </p>
-                </div>
+                </Card>
               )}
 
-              {/* Processing options — always visible, below the action area */}
-              <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6">
-                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
-                  Processing Options
-                </h2>
+              {/* Processing options — always visible */}
+              <Card>
+                <SectionHeader>Processing Options</SectionHeader>
                 <OptionsPanel options={options} onChange={setOptions} />
-              </div>
+              </Card>
             </div>
 
-            {/* Right panel: AI engine */}
+            {/* ── Right panel: AI engine ── */}
             <div className="lg:w-64 xl:w-72 flex-shrink-0 space-y-6">
-              <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-6">
-                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
-                  MT Engine
-                </h2>
+              <Card>
+                <SectionHeader>MT Engine</SectionHeader>
                 <EngineSelector value={engine} onChange={setEngine} />
-              </div>
+              </Card>
             </div>
+
           </div>
         </div>
       </div>
